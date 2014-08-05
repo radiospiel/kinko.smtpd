@@ -1,0 +1,467 @@
+#!/usr/bin/env jit.go
+
+/** 
+kinko.smtpd: This code is based on Go-Guerrilla SMTPd Version 1.1, but heavily
+edited towards the goals of the kinko mail crypto package. Find Go-Guerrilla's
+License statement below.
+
+Changes:
+
+- An email will no longer be put into a redis database, but instead be 
+  passed on to a filter program. Depending on that filter's return value
+  the email will be accepted or rejected.
+- Users are authenticated against the accounts.db sqlite3 database.
+- no nginx integration
+- No configuration file, all configuration is passed on via command line
+
+To run install the jit package from github.com/radiospiel/jit.
+
+*/
+
+/** 
+Go-Guerrilla SMTPd
+A minimalist SMTP server written in Go, made for receiving large volumes of mail.
+Works either as a stand-alone or in conjunction with Nginx SMTP proxy.
+TO DO: add http server for nginx
+
+Copyright (c) 2012 Flashmob, GuerrillaMail.com
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the Software without restriction, including without limitation the
+rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the
+Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+*/
+
+package main
+
+import (
+	"bufio"
+	"bytes"
+	// "crypto/rand"
+	"crypto/tls"
+	"encoding/base64"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"io/ioutil"
+    "os/exec"
+	"log"
+    "math/rand"
+	"net"
+	"os"
+	"runtime"
+	"strconv"
+	"strings"
+	"time"
+)
+
+/* 
+ * The maximum size of an email. (Default: 20 MB)
+ */
+const GSMTP_MAX_SIZE =         20971520
+
+/*
+ * The server hostname
+ */
+var GSMTP_HOST_NAME =        "server.example.com" 
+
+/*
+ * how many seconds before timeout.
+ */
+
+const GSMTP_TIMEOUT =          100 
+const GM_PRIMARY_MAIL_HOST =   "guerrillamail.com"
+const GM_MAX_CLIENTS =         500
+
+var GSTMP_ACCOUNTS_DB string
+var GSTMP_FILTER string
+var GSMTP_PUB_KEY =          "/etc/ssl/certs/ssl-cert-snakeoil.pem"
+var GSMTP_PRV_KEY =          "/etc/ssl/private/ssl-cert-snakeoil.key"
+
+/*
+ * internal global values
+ */
+
+var gstmp_listen_interface string          // interface to listen to.
+var gstmp_tls_config *tls.Config           // tls configuration.
+var gstmp_timeout time.Duration            // timeout.
+var gstmp_sem chan int                     // currently active clients.
+var gstmp_save_mail_chan chan *Client      // workers for processing mail.
+
+/* -- a client ------------------------------------------------------------- */
+
+type Client struct {
+	state       int
+	helo        string
+	mail_from   string
+	rcpt_to     string
+	read_buffer string
+	response    string
+	address     string
+	data        string
+	tls_on      bool
+	conn        net.Conn
+	bufin       *bufio.Reader
+	bufout      *bufio.Writer
+	kill_time   int64
+	errors      int
+	clientId    int64
+	processStatus chan bool
+    processMessage string
+    username    string
+}
+
+func fatal(s string) {
+	log.Fatalf(s)
+}
+
+func warn(s string) {
+	log.Println(s)
+}
+
+func parseArguments() {
+	log.SetOutput(os.Stderr)
+
+	// -- parse command line arguments ----------------------------------------
+
+    var port string
+
+	flag.StringVar(&port, "port", "", "port to listen on, eg. 2525 ")
+	flag.StringVar(&GSMTP_PRV_KEY, "ssl-key", "",  "The SSL key")
+	flag.StringVar(&GSMTP_PUB_KEY, "ssl-cert", "",  "The SSL cert")
+	flag.StringVar(&GSTMP_ACCOUNTS_DB, "accounts-db", "",  "The acocunts db")
+    flag.StringVar(&GSMTP_HOST_NAME, "hostname", "server.example.com", "The STMP hostname")
+	flag.StringVar(&GSTMP_FILTER, "filter", "",  "The GSTMP_FILTER tool")
+	flag.Parse()
+
+	// -- initialize internal data
+
+    gstmp_listen_interface = "0.0.0.0:" + port
+
+	gstmp_sem = make(chan int, GM_MAX_CLIENTS)
+	gstmp_save_mail_chan = make(chan *Client, 5)
+    gstmp_timeout = time.Duration(GSMTP_TIMEOUT) * time.Second
+}
+
+func main() {
+	parseArguments()
+
+	cert, err := tls.LoadX509KeyPair(GSMTP_PUB_KEY, GSMTP_PRV_KEY)
+	if err != nil {
+		fatal(fmt.Sprintf("There was a problem with loading the certificate: %s", err))
+	}
+	gstmp_tls_config = &tls.Config{Certificates: []tls.Certificate{cert}, 
+                                ClientAuth: tls.VerifyClientCertIfGiven, 
+                                ServerName: GSMTP_HOST_NAME}
+	// gstmp_tls_config.Rand = rand.Reader
+
+	// start some processMail workers
+	for i := 0; i < 3; i++ {
+		go processMail()
+	}
+	// Start listening for SMTP connections
+	listener, err := net.Listen("tcp", gstmp_listen_interface)
+	if err != nil {
+		fatal(fmt.Sprintf("Cannot listen on port, %v", err))
+	} else {
+		warn(fmt.Sprintf("Listening on tcp %s",  gstmp_listen_interface))
+	}
+
+	var clientId int64 = 1
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			warn(fmt.Sprintf("Accept error: %s", err))
+			continue
+		}
+		warn("Currently " +strconv.Itoa(runtime.NumGoroutine())+ " serving goroutines")
+		gstmp_sem <- 1 // Wait for active queue to drain.
+		go handleClient(&Client{
+			conn:        conn,
+			address:     conn.RemoteAddr().String(),
+			bufin:       bufio.NewReader(conn),
+			bufout:      bufio.NewWriter(conn),
+			clientId:    clientId,
+			processStatus: make(chan bool),
+		})
+		clientId++
+	}
+}
+
+func handleClient(client *Client) {
+	defer closeClient(client)
+	//	defer closeClient(client)
+	greeting := "220 " + GSMTP_HOST_NAME +
+		" SMTP kinko.smtpd #" + 
+        strconv.FormatInt(client.clientId, 10) + 
+        " (" + strconv.Itoa(len(gstmp_sem)) + ") " + 
+        time.Now().Format(time.RFC1123Z)
+
+	for i := 0; i < 100; i++ {
+		switch client.state {
+		case 0:
+			responseAdd(client, greeting)
+			client.state = 1
+		case 1:
+			input, err := readSmtp(client)
+			if err != nil {
+				warn(fmt.Sprintf("Read error: %v", err))
+				if err == io.EOF {
+					// client closed the connection already
+					return
+				}
+				if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
+					// too slow, timeout
+					return
+				}
+				break
+			}
+			input = strings.Trim(input, " \n\r")
+			cmd := strings.ToUpper(input)
+			switch {
+			case strings.Index(cmd, "HELO") == 0:
+				if len(input) > 5 {
+					client.helo = input[5:]
+				}
+				responseAdd(client, "250 "+ GSMTP_HOST_NAME +" Hello ")
+			case strings.Index(cmd, "EHLO") == 0:
+				if len(input) > 5 {
+					client.helo = input[5:]
+				}
+
+				response := "250-"+ GSMTP_HOST_NAME +" Hello "+client.helo+"["+client.address+"]"+"\r\n"
+                response += "250-SIZE "+ strconv.Itoa(GSMTP_MAX_SIZE) +"\r\n"
+            	if ! client.tls_on {
+                    response += "250-STARTTLS\r\n"
+            	}
+                response += "250-AUTH PLAIN\r\n"
+                response += "250 HELP "
+
+				responseAdd(client, response)
+			case strings.Index(cmd, "MAIL FROM:") == 0:
+				if len(input) > 10 {
+					client.mail_from = input[10:]
+				}
+				responseAdd(client, "250 Ok")
+			case strings.Index(cmd, "RCPT TO:") == 0:
+                // [todo] allow multiple recipients
+				if len(input) > 8 {
+					client.rcpt_to = input[8:]
+				}
+				responseAdd(client, "250 Accepted")
+			case strings.Index(cmd, "NOOP") == 0:
+				responseAdd(client, "250 OK")
+			case strings.Index(cmd, "RSET") == 0:
+				client.mail_from = ""
+				client.rcpt_to = ""
+				responseAdd(client, "250 OK")
+			case strings.Index(cmd, "AUTH PLAIN ") == 0:
+                _, username, password := parseAuthPlain(input[11:])
+                if authenticateUser(username, password) {
+                    client.username = username
+                    responseAdd(client, "235 ok, go ahead")
+                } else {
+    				responseAdd(client, "530 NOT ALLOWED")
+                }
+			case strings.Index(cmd, "DATA") == 0:
+                if client.username == "" {
+    				responseAdd(client, "530 NOT ALLOWED, please authenticate")
+                } else {
+    				responseAdd(client, "354 Enter message, ending with \".\" on a line by itself")
+    				client.state = 2
+                }
+			case (strings.Index(cmd, "STARTTLS") == 0) && !client.tls_on:
+				responseAdd(client, "220 Ready to start TLS")
+				// go to start TLS state
+				client.state = 3
+			case strings.Index(cmd, "QUIT") == 0:
+				responseAdd(client, "221 Bye")
+				killClient(client)
+			default:
+				responseAdd(client, fmt.Sprintf("500 unrecognized command"))
+				client.errors++
+				if client.errors > 3 {
+					responseAdd(client, fmt.Sprintf("500 Too many unrecognized commands"))
+					killClient(client)
+				}
+			}
+		case 2:
+			var err error
+			client.data, err = readSmtp(client)
+			if err == nil {
+                // [todo] add timeout handling.
+                //
+				// place the client on \a gstmp_save_mail_chan; one of 
+                // the processMail workers will pick it up
+				gstmp_save_mail_chan <- client
+				// wait for the save to complete
+				status := <-client.processStatus
+
+                processMessage := client.processMessage
+				if status {
+                    if processMessage == "" {
+                        processMessage = "Success"
+                    }
+					responseAdd(client, "250 OK: " + processMessage)
+				} else {
+                    if processMessage == "" {
+                        processMessage = "Unknown error"
+                    }
+					responseAdd(client, "554 Error: " + processMessage)
+				}
+			} else {
+				warn(fmt.Sprintf("DATA read error: %v", err))
+			}
+			client.state = 1
+		case 3:
+			// upgrade to TLS
+			var tlsConn *tls.Conn
+			tlsConn = tls.Server(client.conn, gstmp_tls_config)
+			err := tlsConn.Handshake() // not necessary to call here, but might as well
+			if err == nil {
+				client.conn = net.Conn(tlsConn)
+				client.bufin = bufio.NewReader(client.conn)
+				client.bufout = bufio.NewWriter(client.conn)
+				client.tls_on = true
+			} else {
+				warn(fmt.Sprintf("Could not TLS handshake:%v", err))
+			}
+			client.state = 1
+		}
+		// Send a response back to the client
+		err := responseWrite(client)
+		if err != nil {
+			if err == io.EOF {
+				// client closed the connection already
+				return
+			}
+			if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
+				// too slow, timeout
+				return
+			}
+		}
+		if client.kill_time > 1 {
+			return
+		}
+	}
+}
+
+func authenticateUser(username string, password string) bool {
+    return true
+}
+
+func responseAdd(client *Client, line string) {
+	client.response = line + "\r\n"
+}
+func closeClient(client *Client) {
+	client.conn.Close()
+	<-gstmp_sem // Done; enable next client to run.
+}
+func killClient(client *Client) {
+	client.kill_time = time.Now().Unix()
+}
+
+func readSmtp(client *Client) (input string, err error) {
+	var reply string
+	// Command state terminator by default
+	suffix := "\r\n"
+	if client.state == 2 {
+		// DATA state
+		suffix = "\r\n.\r\n"
+	}
+	for err == nil {
+		client.conn.SetDeadline(time.Now().Add(gstmp_timeout))
+		reply, err = client.bufin.ReadString('\n')
+		if reply != "" {
+			input = input + reply
+			if len(input) > GSMTP_MAX_SIZE {
+				err = errors.New("Maximum DATA size exceeded (" + strconv.Itoa(GSMTP_MAX_SIZE) + ")")
+				return input, err
+			}
+		}
+		if err != nil {
+			break
+		}
+		if strings.HasSuffix(input, suffix) {
+			break
+		}
+	}
+	return input, err
+}
+
+func responseWrite(client *Client) (err error) {
+	var size int
+	client.conn.SetDeadline(time.Now().Add(gstmp_timeout))
+	size, err = client.bufout.WriteString(client.response)
+	client.bufout.Flush()
+	client.response = client.response[size:]
+	return err
+}
+
+func processMail() {
+	//  receives values from the channel repeatedly until it is closed.
+	for {
+		client := <-gstmp_save_mail_chan
+        
+        msg_id := rand.Int31()
+		warn(fmt.Sprintf("#%d: received %d byte from %s to %s (from %s@%s)", 
+                    msg_id,
+                    len(client.data), 
+                    client.mail_from, 
+                    client.rcpt_to,
+                    client.username, 
+                    client.address))
+
+        // warn(client.data)
+
+        cmd := exec.Command(GSTMP_FILTER, client.username)
+        cmd.Stdin = strings.NewReader(client.data)
+        cmd.Stderr = os.Stderr
+
+        var out bytes.Buffer
+        cmd.Stdout = &out
+        err := cmd.Run()
+
+        client.processMessage = firstLine(out)
+
+        if err != nil {
+            warn(fmt.Sprintf("#%d: Processing FAIL w/%s: %s",  msg_id, err, client.processMessage))
+            warn(fmt.Sprintf("  Filter: '%s'",  GSTMP_FILTER))
+        } else {
+            warn(fmt.Sprintf("#%d: Processed OK: %s",  msg_id, client.processMessage))
+        }
+
+        client.processStatus <- (err == nil)
+	}
+}
+
+func firstLine(buf bytes.Buffer) string {
+    scanner := bufio.NewScanner(bytes.NewReader(buf.Bytes()))
+    for scanner.Scan() {
+        return scanner.Text()
+    }
+    
+    return ""
+}
+func fromBase64(data string) string {
+	buf := bytes.NewBufferString(data)
+	decoder := base64.NewDecoder(base64.StdEncoding, buf)
+	res, _ := ioutil.ReadAll(decoder)
+	return string(res)
+}
+
+func parseAuthPlain(auth_plain string) (identity string, username string, password string) {
+    auth_plain = fromBase64(auth_plain)
+    parts := strings.SplitN(auth_plain, "\x00", 3)
+    return parts[0], parts[1], parts[2]
+}

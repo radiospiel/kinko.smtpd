@@ -1,0 +1,7 @@
+#!/bin/bash
+set -eu
+set -o pipefail
+
+# -- Update var/kinko-smtpd from kinko-smtpd.tar -------------------------------
+
+lib/reconfigure

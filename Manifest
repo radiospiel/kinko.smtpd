@@ -1,0 +1,23 @@
+dependencies=storage gpg frontend connectivity
+
+required_permissions=gpg-crypto
+
+# run_dependencies: which kinko applications must be running before this application can run?
+run_dependencies=
+
+# sys_dependencies: which other dependencies must be installed on the system for this package to run
+os_dependencies=golang
+
+# limits`: the limits for the application, including hard limits on RAM and Disk usage, CPU usage,
+#  etc. See monitrc(5), ulimit, rlimit, quota for inspiration on what is possible
+# limits`: the limits for the application, including hard limits on RAM and Disk usage, CPU usage,
+
+# binaries`: a list of names of binaries, that are publicly accessible
+
+# - `binaries`: a list of names of binaries, that are publicly accessible
+
+# ro_binaries`: a list of names of ro_binaries, that are publicly accessible
+# - `ro_binaries`: a list of names of ro_binaries, that are publicly accessible
+
+# http access: when enabled the component comes with a HTTP server, which renders a configuration
+http=no

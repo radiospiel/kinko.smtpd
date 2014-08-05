@@ -1,0 +1,31 @@
+#!/bin/bash
+set -eu
+set -o pipefail
+
+# -- dump account data ---------------------------------------------------------
+
+# create a temporary copy of the main database
+rm -f var/origin.sqlite3
+kinko.frontend.dumpsql | sqlite3 var/origin.sqlite3
+
+# create a account data copy in a temporary database
+sqlite3 var/accounts.sqlite3 <<-SQL
+ATTACH DATABASE "var/origin.sqlite3" AS origin;
+
+BEGIN;
+
+  CREATE TABLE IF NOT EXISTS smtp_auth (username, password);
+  CREATE INDEX IF NOT EXISTS smtp_auth_idx1 ON smtp_auth(username, password);
+  CREATE UNIQUE INDEX IF NOT EXISTS smtp_auth_idx2 ON smtp_auth(username);
+
+  DELETE FROM smtp_auth;
+
+  INSERT INTO smtp_auth
+    SELECT email AS username, password AS password FROM origin.mailboxes;
+
+COMMIT;
+
+DETACH origin;
+SQL
+
+rm var/origin.sqlite3
