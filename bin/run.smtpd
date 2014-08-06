@@ -271,6 +271,58 @@ func handleClient(client *Client) {
                     client.username = username
                     responseAdd(client, "235 ok, go ahead")
                 } else {
+                    responseAdd(client, "530 NOT ALLOWED")
+                }
+			case strings.Index(cmd, "AUTH LOGIN") == 0:
+                responseAdd(client, "334 VXNlcm5hbWU6")
+                responseWrite(client)
+                
+                var username string
+                {
+                    input, err := readSmtp(client)
+        			if err != nil {
+        				warn(fmt.Sprintf("Read error: %v", err))
+        				if err == io.EOF {
+        					// client closed the connection already
+        					return
+        				}
+        				if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
+        					// too slow, timeout
+        					return
+        				}
+        				break
+        			}
+        			username = strings.Trim(input, " \n\r")
+                    username = fromBase64(username)
+                }
+
+                responseAdd(client, "334 UGFzc3dvcmQ6")
+        		responseWrite(client)
+                
+                var password string
+                {
+        			input, err := readSmtp(client)
+        			if err != nil {
+        				warn(fmt.Sprintf("Read error: %v", err))
+        				if err == io.EOF {
+        					// client closed the connection already
+        					return
+        				}
+        				if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
+        					// too slow, timeout
+        					return
+        				}
+        				break
+        			}
+        			password = strings.Trim(input, " \n\r")
+                    password = fromBase64(password)
+                }
+                
+                warn("authenticating " + username + "/ password " + password)
+                if authenticateUser(username, password) {
+                    client.username = username
+                    responseAdd(client, "235 ok, go ahead")
+                } else {
     				responseAdd(client, "530 NOT ALLOWED")
                 }
 			case strings.Index(cmd, "DATA") == 0:
