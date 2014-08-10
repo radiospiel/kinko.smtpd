@@ -1,18 +1,18 @@
 #!/usr/bin/env jit.go
 
 /** 
-kinko.smtpd: This code is based on Go-Guerrilla SMTPd Version 1.1, but heavily
-edited towards the goals of the kinko mail crypto package. Find Go-Guerrilla's
-License statement below.
+ssmtpd: This code is based on Go-Guerrilla SMTPd Version 1.1, but heavily
+modified towards the needs of the kinko.me email crypto package. 
+Find Go-Guerrilla's License statement below.
 
 Changes:
 
 - An email will no longer be put into a redis database, but instead be 
   passed on to a filter program. Depending on that filter's return value
   the email will be accepted or rejected.
+- No nginx integration
+- No configuration file - all configuration is passed on via command line.
 - Users are authenticated against the accounts.db sqlite3 database.
-- no nginx integration
-- No configuration file, all configuration is passed on via command line
 
 To run install the jit package from github.com/radiospiel/jit.
 
