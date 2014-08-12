@@ -218,6 +218,7 @@ func handleClient(client *Client) {
 			}
 			input = strings.Trim(input, " \n\r")
 			cmd := strings.ToUpper(input)
+			// warn(fmt.Sprintf("cmd: %s", cmd))
 			switch {
 			case strings.Index(cmd, "HELO") == 0:
 				if len(input) > 5 {
@@ -493,17 +494,20 @@ func processMail() {
                     client.username, 
                     client.address))
 
-        // warn(client.data)
+		var err error
 
-        cmd := exec.Command(GSTMP_FILTER, client.username)
-        cmd.Stdin = strings.NewReader(client.data)
-        cmd.Stderr = os.Stderr
+		if(GSTMP_PROCESS == "") {
+			client.processMessage = fmt.Sprintf("received %d byte", len(client.data))
+		} else {
+			cmd := exec.Command(GSTMP_PROCESS, client.username)
+			cmd.Stdin = strings.NewReader(client.data)
+			cmd.Stderr = os.Stderr
 
-        var out bytes.Buffer
-        cmd.Stdout = &out
-        err := cmd.Run()
-
-        client.processMessage = firstLine(out)
+			var out bytes.Buffer
+			cmd.Stdout = &out
+			err = cmd.Run()
+			client.processMessage = firstLine(out)
+		}
 
         if err != nil {
             warn(fmt.Sprintf("#%d: Processing FAIL w/%s: %s",  msg_id, err, client.processMessage))

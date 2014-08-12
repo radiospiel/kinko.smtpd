@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+bytes=$(echo $(cat | wc -c))
+echo "$bytes bytes for <$1>"
+exit 0
