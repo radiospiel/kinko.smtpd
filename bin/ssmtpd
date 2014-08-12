@@ -54,9 +54,9 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-    "os/exec"
+	"os/exec"
 	"log"
-    "math/rand"
+	"math/rand"
 	"net"
 	"os"
 	"runtime"
@@ -65,46 +65,46 @@ import (
 	"time"
 )
 
-const GSMTP_MAX_SIZE    =  20971520  // The maximum size of an email
-var GSMTP_HOST_NAME     =  "server.example.com" // hostname for (HELO,EHLO)
-const GSMTP_TIMEOUT     =   100      // how many seconds before timeout.
-const GM_MAX_CLIENTS    =   500      // max number of clients
-var GSTMP_AUTHENTICATE  =    ""      // command to authenticate
-var GSTMP_PROCESS       =    ""      // command to process email
-var GSMTP_PUB_KEY       =    ""      // TLS certificate
-var GSMTP_PRV_KEY       =    ""      // TLS key
+const GSMTP_MAX_SIZE	=  20971520	 // The maximum size of an email
+var GSMTP_HOST_NAME		=  "server.example.com" // hostname for (HELO,EHLO)
+const GSMTP_TIMEOUT		=	100		 // how many seconds before timeout.
+const GM_MAX_CLIENTS	=	500		 // max number of clients
+var GSTMP_AUTHENTICATE	=	 ""		 // command to authenticate
+var GSTMP_PROCESS		=	 ""		 // command to process email
+var GSMTP_PUB_KEY		=	 ""		 // TLS certificate
+var GSMTP_PRV_KEY		=	 ""		 // TLS key
 
 /*
  * internal global values
  */
 
-var gstmp_listen_interface string          // interface to listen to.
-var gstmp_tls_config *tls.Config           // tls configuration.
-var gstmp_timeout time.Duration            // timeout.
-var gstmp_sem chan int                     // currently active clients.
-var gstmp_save_mail_chan chan *Client      // workers for processing mail.
+var gstmp_listen_interface string		   // interface to listen to.
+var gstmp_tls_config *tls.Config		   // tls configuration.
+var gstmp_timeout time.Duration			   // timeout.
+var gstmp_sem chan int					   // currently active clients.
+var gstmp_save_mail_chan chan *Client	   // workers for processing mail.
 
 /* -- a client ------------------------------------------------------------- */
 
 type Client struct {
-	state       int
-	helo        string
-	mail_from   string
-	rcpt_to     string
+	state		int
+	helo		string
+	mail_from	string
+	rcpt_to		string
 	read_buffer string
-	response    string
-	address     string
-	data        string
-	tls_on      bool
-	conn        net.Conn
-	bufin       *bufio.Reader
-	bufout      *bufio.Writer
-	kill_time   int64
-	errors      int
-	clientId    int64
+	response	string
+	address		string
+	data		string
+	tls_on		bool
+	conn		net.Conn
+	bufin		*bufio.Reader
+	bufout		*bufio.Writer
+	kill_time	int64
+	errors		int
+	clientId	int64
 	processStatus chan bool
-    processMessage string
-    username    string
+	processMessage string
+	username	string
 }
 
 func fatal(s string) {
@@ -120,27 +120,27 @@ func parseArguments() {
 
 	// -- parse command line arguments ----------------------------------------
 
-    var port string
+	var port string
 
-	flag.StringVar(&port,               "port",         "2525",                 "port to listen on, eg. 2525")
-	flag.StringVar(&GSMTP_PRV_KEY,      "ssl-key",      "",                     "The SSL key")
-	flag.StringVar(&GSMTP_PUB_KEY,      "ssl-cert",     "",                     "The SSL cert")
-	flag.StringVar(&GSTMP_AUTHENTICATE, "auth",         "",                     "authenticate command")
-	flag.StringVar(&GSTMP_PROCESS,      "process",      "",             		"process command")
-	flag.StringVar(&GSMTP_HOST_NAME,    "hostname",     "server.example.com",   "The STMP hostname")
+	flag.StringVar(&port,				"port",			"2525",					"port to listen on, eg. 2525")
+	flag.StringVar(&GSMTP_PRV_KEY,		"ssl-key",		"",						"The SSL key")
+	flag.StringVar(&GSMTP_PUB_KEY,		"ssl-cert",		"",						"The SSL cert")
+	flag.StringVar(&GSTMP_AUTHENTICATE, "auth",			"",						"authenticate command")
+	flag.StringVar(&GSTMP_PROCESS,		"process",		"",						"process command")
+	flag.StringVar(&GSMTP_HOST_NAME,	"hostname",		"server.example.com",	"The STMP hostname")
 	flag.Parse()
 
 	// -- initialize internal data
 
-    gstmp_listen_interface = "0.0.0.0:" + port
+	gstmp_listen_interface = "0.0.0.0:" + port
 
 	gstmp_sem = make(chan int, GM_MAX_CLIENTS)
 	gstmp_save_mail_chan = make(chan *Client, 5)
-    gstmp_timeout = time.Duration(GSMTP_TIMEOUT) * time.Second
+	gstmp_timeout = time.Duration(GSMTP_TIMEOUT) * time.Second
 
-    if GSMTP_PUB_KEY == "" || GSMTP_PRV_KEY == "" {
+	if GSMTP_PUB_KEY == "" || GSMTP_PRV_KEY == "" {
 		fatal("Missing -ssl-key or -ssl-cert arguments")
-    }
+	}
 }
 
 func main() {
@@ -151,8 +151,8 @@ func main() {
 		fatal(fmt.Sprintf("There was a problem with loading the certificate: %s", err))
 	}
 	gstmp_tls_config = &tls.Config{Certificates: []tls.Certificate{cert}, 
-                                ClientAuth: tls.VerifyClientCertIfGiven, 
-                                ServerName: GSMTP_HOST_NAME}
+								ClientAuth: tls.VerifyClientCertIfGiven, 
+								ServerName: GSMTP_HOST_NAME}
 	// gstmp_tls_config.Rand = rand.Reader
 
 	// start some processMail workers
@@ -164,7 +164,7 @@ func main() {
 	if err != nil {
 		fatal(fmt.Sprintf("Cannot listen on port, %v", err))
 	} else {
-		warn(fmt.Sprintf("Listening on tcp %s",  gstmp_listen_interface))
+		warn(fmt.Sprintf("Listening on tcp %s",	 gstmp_listen_interface))
 	}
 
 	var clientId int64 = 1
@@ -177,11 +177,11 @@ func main() {
 		warn("Currently " +strconv.Itoa(runtime.NumGoroutine())+ " serving goroutines")
 		gstmp_sem <- 1 // Wait for active queue to drain.
 		go handleClient(&Client{
-			conn:        conn,
-			address:     conn.RemoteAddr().String(),
-			bufin:       bufio.NewReader(conn),
-			bufout:      bufio.NewWriter(conn),
-			clientId:    clientId,
+			conn:		 conn,
+			address:	 conn.RemoteAddr().String(),
+			bufin:		 bufio.NewReader(conn),
+			bufout:		 bufio.NewWriter(conn),
+			clientId:	 clientId,
 			processStatus: make(chan bool),
 		})
 		clientId++
@@ -193,9 +193,9 @@ func handleClient(client *Client) {
 	//	defer closeClient(client)
 	greeting := "220 " + GSMTP_HOST_NAME +
 		" SMTP kinko.smtpd #" + 
-        strconv.FormatInt(client.clientId, 10) + 
-        " (" + strconv.Itoa(len(gstmp_sem)) + ") " + 
-        time.Now().Format(time.RFC1123Z)
+		strconv.FormatInt(client.clientId, 10) + 
+		" (" + strconv.Itoa(len(gstmp_sem)) + ") " + 
+		time.Now().Format(time.RFC1123Z)
 
 	for i := 0; i < 100; i++ {
 		switch client.state {
@@ -231,12 +231,12 @@ func handleClient(client *Client) {
 				}
 
 				response := "250-"+ GSMTP_HOST_NAME +" Hello "+client.helo+"["+client.address+"]"+"\r\n"
-                response += "250-SIZE "+ strconv.Itoa(GSMTP_MAX_SIZE) +"\r\n"
-            	if ! client.tls_on {
-                    response += "250-STARTTLS\r\n"
-            	}
-                response += "250-AUTH PLAIN LOGIN\r\n"
-                response += "250 HELP "
+				response += "250-SIZE "+ strconv.Itoa(GSMTP_MAX_SIZE) +"\r\n"
+				if ! client.tls_on {
+					response += "250-STARTTLS\r\n"
+				}
+				response += "250-AUTH PLAIN LOGIN\r\n"
+				response += "250 HELP "
 
 				responseAdd(client, response)
 			case strings.Index(cmd, "MAIL FROM:") == 0:
@@ -246,30 +246,30 @@ func handleClient(client *Client) {
 				}
 
 				// warn(fmt.Sprintf("client.username: %v", client.username))
-                
-                if client.username == "" {
-                    responseAdd(client, "530 NOT ALLOWED")
-                } else {
-                    if len(input) > 10 {
-					    client.mail_from = input[10:]
-                    }
-				    responseAdd(client, "250 Ok")
-                }
+				
+				if client.username == "" {
+					responseAdd(client, "530 NOT ALLOWED")
+				} else {
+					if len(input) > 10 {
+						client.mail_from = input[10:]
+					}
+					responseAdd(client, "250 Ok")
+				}
 			case strings.Index(cmd, "RCPT TO:") == 0:
 				if ! client.tls_on {
 					responseAdd(client, "530 NOT ALLOWED, must STARTTLS")
 					break
 				}
 
-                // [todo] allow multiple recipients
-                if client.username == "" {
-                    responseAdd(client, "530 NOT ALLOWED")
-                } else {
-                    if len(input) > 8 {
-					    client.rcpt_to = input[8:]
-				    }
-    				responseAdd(client, "250 Accepted")
-                }
+				// [todo] allow multiple recipients
+				if client.username == "" {
+					responseAdd(client, "530 NOT ALLOWED")
+				} else {
+					if len(input) > 8 {
+						client.rcpt_to = input[8:]
+					}
+					responseAdd(client, "250 Accepted")
+				}
 			case strings.Index(cmd, "NOOP") == 0:
 				responseAdd(client, "250 OK")
 			case strings.Index(cmd, "RSET") == 0:
@@ -282,81 +282,81 @@ func handleClient(client *Client) {
 					break
 				}
 
-                _, username, password := parseAuthPlain(input[11:])
-                if authenticateUser(username, password) {
-                    client.username = username
-                    responseAdd(client, "235 ok, go ahead")
-                } else {
-                    responseAdd(client, "530 NOT ALLOWED")
-                }
+				_, username, password := parseAuthPlain(input[11:])
+				if authenticateUser(username, password) {
+					client.username = username
+					responseAdd(client, "235 ok, go ahead")
+				} else {
+					responseAdd(client, "530 NOT ALLOWED")
+				}
 			case strings.Index(cmd, "AUTH LOGIN") == 0:
 				if ! client.tls_on {
 					responseAdd(client, "530 NOT ALLOWED, must STARTTLS")
 					break
 				}
 
-                responseAdd(client, "334 VXNlcm5hbWU6")
-                responseWrite(client)
-                
-                var username string
-                {
-                    input, err := readSmtp(client)
-        			if err != nil {
-        				warn(fmt.Sprintf("Read error: %v", err))
-        				if err == io.EOF {
-        					// client closed the connection already
-        					return
-        				}
-        				if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
-        					// too slow, timeout
-        					return
-        				}
-        				break
-        			}
-        			username = strings.Trim(input, " \n\r")
-                    username = fromBase64(username)
-                }
+				responseAdd(client, "334 VXNlcm5hbWU6")
+				responseWrite(client)
+				
+				var username string
+				{
+					input, err := readSmtp(client)
+					if err != nil {
+						warn(fmt.Sprintf("Read error: %v", err))
+						if err == io.EOF {
+							// client closed the connection already
+							return
+						}
+						if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
+							// too slow, timeout
+							return
+						}
+						break
+					}
+					username = strings.Trim(input, " \n\r")
+					username = fromBase64(username)
+				}
 
-                responseAdd(client, "334 UGFzc3dvcmQ6")
-        		responseWrite(client)
-                
-                var password string
-                {
-        			input, err := readSmtp(client)
-        			if err != nil {
-        				warn(fmt.Sprintf("Read error: %v", err))
-        				if err == io.EOF {
-        					// client closed the connection already
-        					return
-        				}
-        				if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
-        					// too slow, timeout
-        					return
-        				}
-        				break
-        			}
-        			password = strings.Trim(input, " \n\r")
-                    password = fromBase64(password)
-                }
-                
-                if authenticateUser(username, password) {
-                    client.username = username
-                    responseAdd(client, "235 ok, go ahead")
-                } else {
-    				responseAdd(client, "530 NOT ALLOWED")
-                }
+				responseAdd(client, "334 UGFzc3dvcmQ6")
+				responseWrite(client)
+				
+				var password string
+				{
+					input, err := readSmtp(client)
+					if err != nil {
+						warn(fmt.Sprintf("Read error: %v", err))
+						if err == io.EOF {
+							// client closed the connection already
+							return
+						}
+						if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
+							// too slow, timeout
+							return
+						}
+						break
+					}
+					password = strings.Trim(input, " \n\r")
+					password = fromBase64(password)
+				}
+				
+				if authenticateUser(username, password) {
+					client.username = username
+					responseAdd(client, "235 ok, go ahead")
+				} else {
+					responseAdd(client, "530 NOT ALLOWED")
+				}
 			case strings.Index(cmd, "DATA") == 0:
 				if ! client.tls_on {
 					responseAdd(client, "530 NOT ALLOWED, must STARTTLS")
 					break
 				}
 
-                if client.username == "" {
-    				responseAdd(client, "530 NOT ALLOWED, please authenticate")
-                } else {
-    				responseAdd(client, "354 Enter message, ending with \".\" on a line by itself")
-    				client.state = 2
-                }
+				if client.username == "" {
+					responseAdd(client, "530 NOT ALLOWED, please authenticate")
+				} else {
+					responseAdd(client, "354 Enter message, ending with \".\" on a line by itself")
+					client.state = 2
+				}
 			case (strings.Index(cmd, "STARTTLS") == 0) && !client.tls_on:
 				responseAdd(client, "220 Ready to start TLS")
 				// go to start TLS state
@@ -376,24 +376,24 @@ func handleClient(client *Client) {
 			var err error
 			client.data, err = readSmtp(client)
 			if err == nil {
-                // [todo] add timeout handling.
-                //
+				// [todo] add timeout handling.
+				//
 				// place the client on \a gstmp_save_mail_chan; one of 
-                // the processMail workers will pick it up
+				// the processMail workers will pick it up
 				gstmp_save_mail_chan <- client
 				// wait for the save to complete
 				status := <-client.processStatus
 
-                processMessage := client.processMessage
+				processMessage := client.processMessage
 				if status {
-                    if processMessage == "" {
-                        processMessage = "Success"
-                    }
+					if processMessage == "" {
+						processMessage = "Success"
+					}
 					responseAdd(client, "250 OK: " + processMessage)
 				} else {
-                    if processMessage == "" {
-                        processMessage = "Unknown error"
-                    }
+					if processMessage == "" {
+						processMessage = "Unknown error"
+					}
 					responseAdd(client, "554 Error: " + processMessage)
 				}
 			} else {
@@ -447,7 +447,7 @@ func authenticateUser(username string, password string) bool {
 	}()
 
 	err := cmd.Run()
-	
+
 	if err != nil {
 		warn(fmt.Sprintf("auth via %s FAIL: %s", GSTMP_AUTHENTICATE, err))
 	} else {
@@ -506,18 +506,18 @@ func responseWrite(client *Client) (err error) {
 }
 
 func processMail() {
-	//  receives values from the channel repeatedly until it is closed.
+	//	receives values from the channel repeatedly until it is closed.
 	for {
 		client := <-gstmp_save_mail_chan
-        
-        msg_id := rand.Int31()
+		
+		msg_id := rand.Int31()
 		warn(fmt.Sprintf("#%d: received %d byte from %s to %s (from %s@%s)", 
-                    msg_id,
-                    len(client.data), 
-                    client.mail_from, 
-                    client.rcpt_to,
-                    client.username, 
-                    client.address))
+					msg_id,
+					len(client.data), 
+					client.mail_from, 
+					client.rcpt_to,
+					client.username, 
+					client.address))
 
 		var err error
 
@@ -534,24 +534,24 @@ func processMail() {
 			client.processMessage = firstLine(out)
 		}
 
-        if err != nil {
-            warn(fmt.Sprintf("#%d: Processing FAIL w/%s: %s",  msg_id, err, client.processMessage))
-            warn(fmt.Sprintf("  Filter: '%s'",  GSTMP_PROCESS))
-        } else {
-            warn(fmt.Sprintf("#%d: Processed OK: %s",  msg_id, client.processMessage))
-        }
+		if err != nil {
+			warn(fmt.Sprintf("#%d: Processing FAIL w/%s: %s",  msg_id, err, client.processMessage))
+			warn(fmt.Sprintf("	Filter: '%s'",	GSTMP_PROCESS))
+		} else {
+			warn(fmt.Sprintf("#%d: Processed OK: %s",  msg_id, client.processMessage))
+		}
 
-        client.processStatus <- (err == nil)
+		client.processStatus <- (err == nil)
 	}
 }
 
 func firstLine(buf bytes.Buffer) string {
-    scanner := bufio.NewScanner(bytes.NewReader(buf.Bytes()))
-    for scanner.Scan() {
-        return scanner.Text()
-    }
-    
-    return ""
+	scanner := bufio.NewScanner(bytes.NewReader(buf.Bytes()))
+	for scanner.Scan() {
+		return scanner.Text()
+	}
+	
+	return ""
 }
 func fromBase64(data string) string {
 	buf := bytes.NewBufferString(data)
@@ -561,7 +561,7 @@ func fromBase64(data string) string {
 }
 
 func parseAuthPlain(auth_plain string) (identity string, username string, password string) {
-    auth_plain = fromBase64(auth_plain)
-    parts := strings.SplitN(auth_plain, "\x00", 3)
-    return parts[0], parts[1], parts[2]
+	auth_plain = fromBase64(auth_plain)
+	parts := strings.SplitN(auth_plain, "\x00", 3)
+	return parts[0], parts[1], parts[2]
 }
