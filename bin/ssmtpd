@@ -85,8 +85,8 @@ const GM_MAX_CLIENTS =         500
 
 var GSTMP_ACCOUNTS_DB string
 var GSTMP_FILTER string
-var GSMTP_PUB_KEY =          "/etc/ssl/certs/ssl-cert-snakeoil.pem"
-var GSMTP_PRV_KEY =          "/etc/ssl/private/ssl-cert-snakeoil.key"
+var GSMTP_PUB_KEY =          ""
+var GSMTP_PRV_KEY =          ""
 
 /*
  * internal global values
@@ -136,12 +136,12 @@ func parseArguments() {
 
     var port string
 
-	flag.StringVar(&port, "port", "", "port to listen on, eg. 2525 ")
-	flag.StringVar(&GSMTP_PRV_KEY, "ssl-key", "",  "The SSL key")
-	flag.StringVar(&GSMTP_PUB_KEY, "ssl-cert", "",  "The SSL cert")
-	flag.StringVar(&GSTMP_ACCOUNTS_DB, "accounts-db", "",  "The acocunts db")
-    flag.StringVar(&GSMTP_HOST_NAME, "hostname", "server.example.com", "The STMP hostname")
-	flag.StringVar(&GSTMP_FILTER, "filter", "",  "The GSTMP_FILTER tool")
+	flag.StringVar(&port,               "port",         "2525",                 "port to listen on, eg. 2525")
+	flag.StringVar(&GSMTP_PRV_KEY,      "ssl-key",      "",                     "The SSL key")
+	flag.StringVar(&GSMTP_PUB_KEY,      "ssl-cert",     "",                     "The SSL cert")
+	flag.StringVar(&GSTMP_ACCOUNTS_DB,  "accounts-db",  "",                     "The acocunts db")
+    flag.StringVar(&GSMTP_HOST_NAME,    "hostname",     "server.example.com",   "The STMP hostname")
+	flag.StringVar(&GSTMP_FILTER,       "filter",       "/bin/cat",             "the filter tool")
 	flag.Parse()
 
 	// -- initialize internal data
@@ -151,6 +151,10 @@ func parseArguments() {
 	gstmp_sem = make(chan int, GM_MAX_CLIENTS)
 	gstmp_save_mail_chan = make(chan *Client, 5)
     gstmp_timeout = time.Duration(GSMTP_TIMEOUT) * time.Second
+
+    if GSMTP_PUB_KEY == "" || GSMTP_PRV_KEY == "" {
+		fatal("Missing -ssl-key or -ssl-cert arguments")
+    }
 }
 
 func main() {
