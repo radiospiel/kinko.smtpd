@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+env | grep SSMTPD
+
+if [[ "${SSMTPD_USERNAME:-}" = "me@example.com" ]] ; then
+    [[ "${SSMTPD_PASSWORD:-}" == "good.password" ]]
+else
+  false
+fi
