@@ -245,31 +245,31 @@ func handleClient(client *Client) {
 					break
 				}
 
-				// warn(fmt.Sprintf("client.username: %v", client.username))
-				
 				if client.username == "" {
 					responseAdd(client, "530 NOT ALLOWED")
-				} else {
-					if len(input) > 10 {
-						client.mail_from = input[10:]
-					}
-					responseAdd(client, "250 Ok")
+					break
+				} 
+
+				if len(input) > 10 {
+					client.mail_from = input[10:]
 				}
+				responseAdd(client, "250 Ok")
 			case strings.Index(cmd, "RCPT TO:") == 0:
 				if ! client.tls_on {
 					responseAdd(client, "530 NOT ALLOWED, must STARTTLS")
 					break
 				}
 
-				// [todo] allow multiple recipients
 				if client.username == "" {
 					responseAdd(client, "530 NOT ALLOWED")
-				} else {
-					if len(input) > 8 {
-						client.rcpt_to = input[8:]
-					}
-					responseAdd(client, "250 Accepted")
+					break
+				} 
+
+				// [todo] allow multiple recipients
+				if len(input) > 8 {
+					client.rcpt_to = input[8:]
 				}
+				responseAdd(client, "250 Accepted")
 			case strings.Index(cmd, "NOOP") == 0:
 				responseAdd(client, "250 OK")
 			case strings.Index(cmd, "RSET") == 0:
@@ -352,11 +352,12 @@ func handleClient(client *Client) {
 				}
 
 				if client.username == "" {
-					responseAdd(client, "530 NOT ALLOWED, please authenticate")
-				} else {
-					responseAdd(client, "354 Enter message, ending with \".\" on a line by itself")
-					client.state = 2
-				}
+					responseAdd(client, "530 NOT ALLOWED")
+					break
+				} 
+
+				responseAdd(client, "354 Enter message, ending with \".\" on a line by itself")
+				client.state = 2
 			case (strings.Index(cmd, "STARTTLS") == 0) && !client.tls_on:
 				responseAdd(client, "220 Ready to start TLS")
 				// go to start TLS state
