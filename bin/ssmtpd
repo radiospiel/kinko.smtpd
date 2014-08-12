@@ -65,28 +65,14 @@ import (
 	"time"
 )
 
-/* 
- * The maximum size of an email. (Default: 20 MB)
- */
-const GSMTP_MAX_SIZE =         20971520
-
-/*
- * The server hostname
- */
-var GSMTP_HOST_NAME =        "server.example.com" 
-
-/*
- * how many seconds before timeout.
- */
-
-const GSMTP_TIMEOUT =          100 
-const GM_PRIMARY_MAIL_HOST =   "guerrillamail.com"
-const GM_MAX_CLIENTS =         500
-
-var GSTMP_ACCOUNTS_DB string
-var GSTMP_FILTER string
-var GSMTP_PUB_KEY =          ""
-var GSMTP_PRV_KEY =          ""
+const GSMTP_MAX_SIZE    =  20971520  // The maximum size of an email
+var GSMTP_HOST_NAME     =  "server.example.com" // hostname for (HELO,EHLO)
+const GSMTP_TIMEOUT     =   100      // how many seconds before timeout.
+const GM_MAX_CLIENTS    =   500      // max number of clients
+var GSTMP_AUTHENTICATE  =    ""      // command to authenticate
+var GSTMP_PROCESS       =    ""      // command to process email
+var GSMTP_PUB_KEY       =    ""      // TLS certificate
+var GSMTP_PRV_KEY       =    ""      // TLS key
 
 /*
  * internal global values
@@ -139,9 +125,9 @@ func parseArguments() {
 	flag.StringVar(&port,               "port",         "2525",                 "port to listen on, eg. 2525")
 	flag.StringVar(&GSMTP_PRV_KEY,      "ssl-key",      "",                     "The SSL key")
 	flag.StringVar(&GSMTP_PUB_KEY,      "ssl-cert",     "",                     "The SSL cert")
-	flag.StringVar(&GSTMP_ACCOUNTS_DB,  "accounts-db",  "",                     "The acocunts db")
-    flag.StringVar(&GSMTP_HOST_NAME,    "hostname",     "server.example.com",   "The STMP hostname")
-	flag.StringVar(&GSTMP_FILTER,       "filter",       "/bin/cat",             "the filter tool")
+	flag.StringVar(&GSTMP_AUTHENTICATE, "auth",         "",                     "authenticate command")
+	flag.StringVar(&GSTMP_PROCESS,      "process",      "",             		"process command")
+	flag.StringVar(&GSMTP_HOST_NAME,    "hostname",     "server.example.com",   "The STMP hostname")
 	flag.Parse()
 
 	// -- initialize internal data
@@ -502,7 +488,7 @@ func processMail() {
 
         if err != nil {
             warn(fmt.Sprintf("#%d: Processing FAIL w/%s: %s",  msg_id, err, client.processMessage))
-            warn(fmt.Sprintf("  Filter: '%s'",  GSTMP_FILTER))
+            warn(fmt.Sprintf("  Filter: '%s'",  GSTMP_PROCESS))
         } else {
             warn(fmt.Sprintf("#%d: Processed OK: %s",  msg_id, client.processMessage))
         }
