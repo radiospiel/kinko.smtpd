@@ -1,7 +1,7 @@
 all: tests
 
 tests:
-	cd test && tools/roundup *roundup.sh
+	make -C test
 
 install:
 	false TODO
