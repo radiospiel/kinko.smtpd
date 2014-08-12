@@ -1,5 +1,5 @@
 #!/usr/bin/env roundup
-describe "tests SMTP authentication"
+describe "tests email processing"
 
 . testhelper.inc
 

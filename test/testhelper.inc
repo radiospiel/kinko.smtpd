@@ -14,9 +14,9 @@ function after() {
 # -- start and stop ssmtpd ----------------------------------------------------
 
 function start_ssmtpd() {
-  mkdir -p $PWD/pids
+  mkdir -p $PWD/pids $PWD/log
 
-  $PWD/../bin/ssmtpd $@ &
+  $PWD/../bin/ssmtpd $@ >> $PWD/log/ssmtpd.log 2>> $PWD/log/ssmtpd.log &
   echo $! > ssmtpd.pid
 }
 

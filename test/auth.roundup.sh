@@ -61,28 +61,6 @@ it_authenticates_via_false_process() {
     --auth-password good.password
 }
 
-it_authenticates_via_true_process() {
-  start_ssmtpd \
-      --hostname ssmtpd.test.local \
-      --ssl-key $PWD/fixtures/ssmtpd.test.local.priv  \
-      --ssl-cert $PWD/fixtures/ssmtpd.test.local.pem  \
-      --auth $(which true)
-   
-  tools/wait_port 2525 1
-
-  # supports LOGIN
-  $swaks --to user@example.com \
-    --auth LOGIN \
-    --auth-user me@example.com \
-    --auth-password good.password
-
-  # supports PLAIN
-  $swaks --to user@example.com \
-    --auth PLAIN \
-    --auth-user me@example.com \
-    --auth-password good.password
-}
-
 it_authenticates_via_real_process() {
   start_ssmtpd \
       --hostname ssmtpd.test.local \
