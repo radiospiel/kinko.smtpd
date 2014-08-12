@@ -46,7 +46,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	// "crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
 	"errors"
@@ -153,7 +152,6 @@ func main() {
 	gstmp_tls_config = &tls.Config{Certificates: []tls.Certificate{cert}, 
 								ClientAuth: tls.VerifyClientCertIfGiven, 
 								ServerName: GSMTP_HOST_NAME}
-	// gstmp_tls_config.Rand = rand.Reader
 
 	// start some processMail workers
 	for i := 0; i < 3; i++ {
@@ -203,7 +201,7 @@ func handleClient(client *Client) {
 			responseAdd(client, greeting)
 			client.state = 1
 		case 1:
-			input, err := readSmtp(client)
+			input, err := readClientUntil(client, "\r\n")
 			if err != nil {
 				warn(fmt.Sprintf("Read error: %v", err))
 				if err == io.EOF {
@@ -300,7 +298,7 @@ func handleClient(client *Client) {
 				
 				var username string
 				{
-					input, err := readSmtp(client)
+					input, err := readClientUntil(client, "\r\n")
 					if err != nil {
 						warn(fmt.Sprintf("Read error: %v", err))
 						if err == io.EOF {
@@ -322,7 +320,7 @@ func handleClient(client *Client) {
 				
 				var password string
 				{
-					input, err := readSmtp(client)
+					input, err := readClientUntil(client, "\r\n")
 					if err != nil {
 						warn(fmt.Sprintf("Read error: %v", err))
 						if err == io.EOF {
@@ -375,7 +373,7 @@ func handleClient(client *Client) {
 			}
 		case 2:
 			var err error
-			client.data, err = readSmtp(client)
+			client.data, err = readClientUntil(client, "\r\n.\r\n")
 			if err == nil {
 				// [todo] add timeout handling.
 				//
@@ -469,14 +467,9 @@ func killClient(client *Client) {
 	client.kill_time = time.Now().Unix()
 }
 
-func readSmtp(client *Client) (input string, err error) {
+func readClientUntil(client *Client, suffix string) (input string, err error) {
 	var reply string
-	// Command state terminator by default
-	suffix := "\r\n"
-	if client.state == 2 {
-		// DATA state
-		suffix = "\r\n.\r\n"
-	}
+
 	for err == nil {
 		client.conn.SetDeadline(time.Now().Add(gstmp_timeout))
 		reply, err = client.bufin.ReadString('\n')
