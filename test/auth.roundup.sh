@@ -3,7 +3,7 @@ describe "tests SMTP authentication"
 
 . testhelper.inc
 
-swaks="swaks --server localhost --port 2525"
+swaks="swaks --server localhost --port 2525 --tls --tls-protocol no_sslv2,no_sslv3"
 
 it_requires_authentication() {
   start_ssmtpd \

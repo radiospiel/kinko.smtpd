@@ -240,6 +240,11 @@ func handleClient(client *Client) {
 
 				responseAdd(client, response)
 			case strings.Index(cmd, "MAIL FROM:") == 0:
+				if ! client.tls_on {
+					responseAdd(client, "530 NOT ALLOWED, must STARTTLS")
+					break
+				}
+
 				// warn(fmt.Sprintf("client.username: %v", client.username))
                 
                 if client.username == "" {
@@ -251,6 +256,11 @@ func handleClient(client *Client) {
 				    responseAdd(client, "250 Ok")
                 }
 			case strings.Index(cmd, "RCPT TO:") == 0:
+				if ! client.tls_on {
+					responseAdd(client, "530 NOT ALLOWED, must STARTTLS")
+					break
+				}
+
                 // [todo] allow multiple recipients
                 if client.username == "" {
                     responseAdd(client, "530 NOT ALLOWED")
@@ -267,6 +277,11 @@ func handleClient(client *Client) {
 				client.rcpt_to = ""
 				responseAdd(client, "250 OK")
 			case strings.Index(cmd, "AUTH PLAIN ") == 0:
+				if ! client.tls_on {
+					responseAdd(client, "530 NOT ALLOWED, must STARTTLS")
+					break
+				}
+
                 _, username, password := parseAuthPlain(input[11:])
                 if authenticateUser(username, password) {
                     client.username = username
@@ -275,6 +290,11 @@ func handleClient(client *Client) {
                     responseAdd(client, "530 NOT ALLOWED")
                 }
 			case strings.Index(cmd, "AUTH LOGIN") == 0:
+				if ! client.tls_on {
+					responseAdd(client, "530 NOT ALLOWED, must STARTTLS")
+					break
+				}
+
                 responseAdd(client, "334 VXNlcm5hbWU6")
                 responseWrite(client)
                 
@@ -326,6 +346,11 @@ func handleClient(client *Client) {
     				responseAdd(client, "530 NOT ALLOWED")
                 }
 			case strings.Index(cmd, "DATA") == 0:
+				if ! client.tls_on {
+					responseAdd(client, "530 NOT ALLOWED, must STARTTLS")
+					break
+				}
+
                 if client.username == "" {
     				responseAdd(client, "530 NOT ALLOWED, please authenticate")
                 } else {

@@ -3,7 +3,7 @@ describe "tests SMTP authentication"
 
 . testhelper.inc
 
-swaks="swaks --server localhost --port 2525"
+swaks="swaks --server localhost --port 2525 --tls --tls-protocol no_sslv2,no_sslv3"
 
 it_processes_ok() {
   start_ssmtpd \
@@ -11,7 +11,7 @@ it_processes_ok() {
       --ssl-key $PWD/fixtures/ssmtpd.test.local.priv  \
       --ssl-cert $PWD/fixtures/ssmtpd.test.local.pem  \
       --auth $(which true) \
-      --process $PWD/fixtures/process.success
+      --process $PWD/fixtures/process.ok
 
   tools/wait_port 2525 1
 
@@ -27,7 +27,7 @@ it_processes_fail() {
       --ssl-key $PWD/fixtures/ssmtpd.test.local.priv  \
       --ssl-cert $PWD/fixtures/ssmtpd.test.local.pem  \
       --auth $(which true) \
-      --process $PWD/fixtures/process.success
+      --process $PWD/fixtures/process.ok
 
   tools/wait_port 2525 1
 
