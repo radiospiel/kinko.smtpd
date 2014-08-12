@@ -3,17 +3,104 @@ describe "tests SMTP authentication"
 
 . testhelper.inc
 
-it_supports_authentication() {
+swaks="swaks --server localhost --port 2525"
+
+it_requires_authentication() {
   start_ssmtpd \
       --hostname ssmtpd.test.local \
       --ssl-key $PWD/fixtures/ssmtpd.test.local.priv  \
-      --ssl-cert $PWD/fixtures/ssmtpd.test.local.pem \
-      --port 2626
-  tools/wait_port 2626 1
+      --ssl-cert $PWD/fixtures/ssmtpd.test.local.pem 
+  tools/wait_port 2525 1
 
   # don't accept non-authenticated mails
-  ! swaks --to user@example.com \
-    --server localhost \
-    --port 2626 \
+  ! $swaks --to user@example.com \
     --quit-after FROM
+}
+
+it_authenticates() {
+  start_ssmtpd \
+      --hostname ssmtpd.test.local \
+      --ssl-key $PWD/fixtures/ssmtpd.test.local.priv  \
+      --ssl-cert $PWD/fixtures/ssmtpd.test.local.pem  \
+      --auth $(which true)
+   
+  tools/wait_port 2525 1
+
+  # supports LOGIN
+  $swaks --to user@example.com \
+    --auth LOGIN \
+    --auth-user me@example.com \
+    --auth-password good.password
+
+  # supports PLAIN
+  $swaks --to user@example.com \
+    --auth PLAIN \
+    --auth-user me@example.com \
+    --auth-password good.password
+}
+
+it_authenticates_via_false_process() {
+  start_ssmtpd \
+      --hostname ssmtpd.test.local \
+      --ssl-key $PWD/fixtures/ssmtpd.test.local.priv  \
+      --ssl-cert $PWD/fixtures/ssmtpd.test.local.pem  \
+      --auth $(which false)
+   
+  tools/wait_port 2525 1
+
+  # supports LOGIN
+  ! $swaks --to user@example.com \
+    --auth LOGIN \
+    --auth-user me@example.com \
+    --auth-password good.password
+
+  # supports PLAIN
+  ! $swaks --to user@example.com \
+    --auth PLAIN \
+    --auth-user me@example.com \
+    --auth-password good.password
+}
+
+it_authenticates_via_true_process() {
+  start_ssmtpd \
+      --hostname ssmtpd.test.local \
+      --ssl-key $PWD/fixtures/ssmtpd.test.local.priv  \
+      --ssl-cert $PWD/fixtures/ssmtpd.test.local.pem  \
+      --auth $(which true)
+   
+  tools/wait_port 2525 1
+
+  # supports LOGIN
+  $swaks --to user@example.com \
+    --auth LOGIN \
+    --auth-user me@example.com \
+    --auth-password good.password
+
+  # supports PLAIN
+  $swaks --to user@example.com \
+    --auth PLAIN \
+    --auth-user me@example.com \
+    --auth-password good.password
+}
+
+it_authenticates_via_real_process() {
+  start_ssmtpd \
+      --hostname ssmtpd.test.local \
+      --ssl-key $PWD/fixtures/ssmtpd.test.local.priv  \
+      --ssl-cert $PWD/fixtures/ssmtpd.test.local.pem  \
+      --auth $PWD/fixtures/authenticate
+
+  tools/wait_port 2525 1
+
+  # supports LOGIN
+  $swaks --to user@example.com \
+    --auth LOGIN \
+    --auth-user me@example.com \
+    --auth-password good.password
+
+  # supports PLAIN
+  $swaks --to user@example.com \
+    --auth PLAIN \
+    --auth-user me@example.com \
+    --auth-password good.password
 }

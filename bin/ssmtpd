@@ -234,7 +234,7 @@ func handleClient(client *Client) {
             	if ! client.tls_on {
                     response += "250-STARTTLS\r\n"
             	}
-                response += "250-AUTH PLAIN\r\n"
+                response += "250-AUTH PLAIN LOGIN\r\n"
                 response += "250 HELP "
 
 				responseAdd(client, response)
@@ -318,7 +318,6 @@ func handleClient(client *Client) {
                     password = fromBase64(password)
                 }
                 
-                warn("authenticating " + username + "/ password " + password)
                 if authenticateUser(username, password) {
                     client.username = username
                     responseAdd(client, "235 ok, go ahead")
@@ -409,7 +408,27 @@ func handleClient(client *Client) {
 }
 
 func authenticateUser(username string, password string) bool {
-    return true
+	cmd := exec.Command(GSTMP_AUTHENTICATE)
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = os.Stdout
+
+	os.Setenv("SSMTPD_USERNAME", username)
+	os.Setenv("SSMTPD_PASSWORD", password)
+
+	defer func() {
+		os.Setenv("SSMTPD_USERNAME", "")
+		os.Setenv("SSMTPD_PASSWORD", "")
+	}()
+
+	err := cmd.Run()
+	
+	if err != nil {
+		warn(fmt.Sprintf("auth via %s FAIL: %s", GSTMP_AUTHENTICATE, err))
+	} else {
+		warn(fmt.Sprintf("auth via %s OK", GSTMP_AUTHENTICATE))
+	}
+
+	return err == nil
 }
 
 func responseAdd(client *Client, line string) {
