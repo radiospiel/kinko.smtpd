@@ -253,16 +253,26 @@ func handleClient(client *Client) {
 
 				responseAdd(client, response)
 			case strings.Index(cmd, "MAIL FROM:") == 0:
-				if len(input) > 10 {
-					client.mail_from = input[10:]
-				}
-				responseAdd(client, "250 Ok")
+				// warn(fmt.Sprintf("client.username: %v", client.username))
+                
+                if client.username == "" {
+                    responseAdd(client, "530 NOT ALLOWED")
+                } else {
+                    if len(input) > 10 {
+					    client.mail_from = input[10:]
+                    }
+				    responseAdd(client, "250 Ok")
+                }
 			case strings.Index(cmd, "RCPT TO:") == 0:
                 // [todo] allow multiple recipients
-				if len(input) > 8 {
-					client.rcpt_to = input[8:]
-				}
-				responseAdd(client, "250 Accepted")
+                if client.username == "" {
+                    responseAdd(client, "530 NOT ALLOWED")
+                } else {
+                    if len(input) > 8 {
+					    client.rcpt_to = input[8:]
+				    }
+    				responseAdd(client, "250 Accepted")
+                }
 			case strings.Index(cmd, "NOOP") == 0:
 				responseAdd(client, "250 OK")
 			case strings.Index(cmd, "RSET") == 0:
