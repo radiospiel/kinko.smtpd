@@ -3,12 +3,28 @@ set -eu
 #
 # -- before and after ---------------------------------------------------------
 
-before() {
+function before() {
   :
 }
 
-after() {
-  :
+function after() {
+  stop_ssmtpd
+}
+
+# -- start and stop ssmtpd ----------------------------------------------------
+
+function start_ssmtpd() {
+  mkdir -p $PWD/pids
+
+  $PWD/../bin/ssmtpd $@ &
+  echo $! > ssmtpd.pid
+}
+
+function stop_ssmtpd() {
+  if [ -f ssmtpd.pid ]; then
+    kill $(cat ssmtpd.pid) || true
+    rm -f ssmtpd.pid
+  fi
 }
 
 #

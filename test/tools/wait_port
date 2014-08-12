@@ -1,0 +1,90 @@
+#!/usr/bin/env jit.cc
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <strings.h>
+#include <netdb.h>
+
+#define sleep(x) usleep((int)(x * 1000000))
+
+#define TIMEOUT_DEFAULT 2.0
+#define CHECK_INTERVAL	0.1
+
+static int check_connection(struct sockaddr_in* p_sockaddr_in) {
+	int rc = 0;
+	
+	int fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if(!fd)
+		perror("socket");
+
+	if(!connect(fd, (struct sockaddr *)p_sockaddr_in, sizeof(struct sockaddr_in))) {
+		rc = 1;
+	}
+
+	close(fd);
+	return rc;
+}
+
+int main(int argc, char *argv[]) {
+	if (argc < 2) {
+		fprintf(stderr, "Usage: %s [interface:]port [ timeout ]\n", argv[0]);
+		exit(0);
+	}
+
+	const char* address = 0;
+	int port = 0;
+	
+	{
+		char* colon = strchr(argv[1], ':');
+		if(colon) {
+			address = argv[1];
+			*colon++ = 0;
+			port = atoi(colon);
+		}
+		else {
+			address = "127.0.0.1";
+			port = atoi(argv[1]);
+		}
+	}
+	
+	double timeout = argv[2] ? atof(argv[2]) : 0;
+	
+	/* 
+	 * Set up sockaddr
+	 */
+    
+	struct sockaddr_in serverData;
+	bzero(&serverData, sizeof(serverData));
+	serverData.sin_family = AF_INET;
+	struct hostent *host = gethostbyname(address);
+	bcopy(host->h_addr, &(serverData.sin_addr.s_addr), host->h_length);
+	serverData.sin_port = htons(port);
+
+	const int loops = timeout < CHECK_INTERVAL ? 1 : (int)( (CHECK_INTERVAL/2 + timeout) / CHECK_INTERVAL);
+	int result = 1;
+	int i;
+	
+	for(i = 0; i < loops; ++i) {
+		if(i > 0)
+			fprintf(stderr, ".");
+
+		if(check_connection(&serverData)) {
+			result = 0;
+			break;
+		}
+
+		sleep(CHECK_INTERVAL);
+	}
+	if(i > 1)
+		fprintf(stderr, "\n");
+
+	if(result == 0) {
+		fprintf(stderr, "%s:%d is open.\n", address, port);
+	}
+	else {
+		fprintf(stderr, "%s:%d is NOT open.\n", address, port);
+	}
+	return result;
+}
