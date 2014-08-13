@@ -269,22 +269,10 @@ func handleClient(client *Client) {
 				}
 
 				responseAdd(client, "334 VXNlcm5hbWU6")
-
-				var username string
-				{
-					input := readClientUntil(client, "\r\n")
-					username = strings.Trim(input, " \n\r")
-					username = fromBase64(username)
-				}
+				username := readAndDecodeBase64FromClient(client)
 
 				responseAdd(client, "334 UGFzc3dvcmQ6")
-
-				var password string
-				{
-					input := readClientUntil(client, "\r\n")
-					password = strings.Trim(input, " \n\r")
-					password = fromBase64(password)
-				}
+				password := readAndDecodeBase64FromClient(client)
 
 				if authenticateUser(username, password) {
 					client.username = username
@@ -452,6 +440,12 @@ func readClientUntil(client *Client, suffix string) (input string) {
 		}
 	}
 	return input
+}
+
+func readAndDecodeBase64FromClient(client *Client) (string) {
+	input := readClientUntil(client, "\r\n")
+	trimmed := strings.Trim(input, " \n\r")
+	return fromBase64(trimmed)
 }
 
 /*
