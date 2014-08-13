@@ -97,7 +97,6 @@ type Client struct {
 	conn		net.Conn
 	bufin		*bufio.Reader
 	bufout		*bufio.Writer
-	kill_client	bool			// set to true to finish this connection	
 	processMessage string		// result message of email processing
 	processStatus chan bool
 }
@@ -270,7 +269,6 @@ func handleClient(client *Client) {
 				response += "250 HELP "
 
 				responseAdd(client, response)
-
 			case NOOP:
 				responseAdd(client, "250 OK")
 			case RSET:
@@ -382,14 +380,14 @@ func handleClient(client *Client) {
 
 			case QUIT:
 				responseAdd(client, "221 Bye")
-				client.kill_client = true
+				return
 			default:
-				responseAdd(client, fmt.Sprintf("500 unrecognized command"))
 				client_errors++
 				if client_errors > 3 {
-					responseAdd(client, fmt.Sprintf("500 Too many unrecognized commands"))
-					client.kill_client = true
+					responseAdd(client, "500 Too many unrecognized commands")
+					return
 				}
+				responseAdd(client, "500 unrecognized command")
 			}
 		case 3:
 			client.data = readClientUntil(client, "\r\n.\r\n")
@@ -406,10 +404,6 @@ func handleClient(client *Client) {
 				responseAdd(client, "554 Error: " + client.processMessage)
 			}
 			client_state = 1
-		}
-
-		if client.kill_client {
-			return
 		}
 	}
 }
