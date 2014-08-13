@@ -102,7 +102,6 @@ type Client struct {
 	bufin		*bufio.Reader
 	bufout		*bufio.Writer
 	kill_client	bool			// set to true to finish this connection	
-	response	string			// buffer for response message
 	errors		int 			// number of errors in this connection
 	processMessage string		// result message of email processing
 	processStatus chan bool
@@ -270,7 +269,6 @@ func handleClient(client *Client) {
 				}
 
 				responseAdd(client, "334 VXNlcm5hbWU6")
-				responseWrite(client)
 
 				var username string
 				{
@@ -280,7 +278,6 @@ func handleClient(client *Client) {
 				}
 
 				responseAdd(client, "334 UGFzc3dvcmQ6")
-				responseWrite(client)
 
 				var password string
 				{
@@ -397,8 +394,6 @@ func handleClient(client *Client) {
 			}
 			client.state = 1
 		}
-		// Send a response back to the client
-		responseWrite(client)
 
 		if client.kill_client {
 			return
@@ -430,9 +425,6 @@ func authenticateUser(username string, password string) bool {
 	return err == nil
 }
 
-func responseAdd(client *Client, line string) {
-	client.response = line + "\r\n"
-}
 func closeClient(client *Client) {
 	client.conn.Close()
 	<-gstmp_sem // Done; enable next client to run.
@@ -462,14 +454,20 @@ func readClientUntil(client *Client, suffix string) (input string) {
 	return input
 }
 
-func responseWrite(client *Client) {
-	client.conn.SetDeadline(time.Now().Add(gstmp_timeout))
-	size, err := client.bufout.WriteString(client.response)
-	if err != nil {
-		panic(err)
+/*
+ * add CRLF to response and flush to client
+ */
+func responseAdd(client *Client, line string) {
+	data := line + "\r\n"
+	for data != "" {
+		client.conn.SetDeadline(time.Now().Add(gstmp_timeout))
+		size, err := client.bufout.WriteString(data)
+		if err != nil {
+			panic(err)
+		}
+		client.bufout.Flush()
+		data = data[size:]
 	}
-	client.bufout.Flush()
-	client.response = client.response[size:]
 }
 
 func processMail() {
