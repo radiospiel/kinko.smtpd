@@ -190,17 +190,11 @@ func main() {
 
 func handleClient(client *Client) {
 	defer closeClient(client)
-	//	defer closeClient(client)
-	greeting := "220 " + GSMTP_HOST_NAME +
-		" SMTP kinko.smtpd #" + 
-		strconv.FormatInt(client.clientId, 10) + 
-		" (" + strconv.Itoa(len(gstmp_sem)) + ") " + 
-		time.Now().Format(time.RFC1123Z)
 
 	for i := 0; i < 100; i++ {
 		switch client.state {
 		case 0:
-			responseAdd(client, greeting)
+			responseAdd(client, fmt.Sprintf("220 %s SMTP kinko.smtpd"))
 			client.state = 1
 		case 1:
 			input, err := readClientUntil(client, "\r\n")
