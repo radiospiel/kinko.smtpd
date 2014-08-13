@@ -217,7 +217,10 @@ func parseSmtpCommand(input string) (cmd string, remainder string) {
 }
 
 func handleClient(client *Client) {
-	defer closeClient(client)
+	defer func() {
+		client.conn.Close()
+		<-gstmp_sem // Done; enable next client to run.
+	}()
 
 	defer func() {
 		err := recover()
@@ -425,11 +428,6 @@ func authenticateUser(username string, password string) bool {
 	}
 
 	return err == nil
-}
-
-func closeClient(client *Client) {
-	client.conn.Close()
-	<-gstmp_sem // Done; enable next client to run.
 }
 
 /*
