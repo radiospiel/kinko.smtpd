@@ -239,6 +239,54 @@ func handleClient(client *Client) {
 		}
 	}()
 
+	/*
+	 * add CRLF to response and flush to client
+	 */
+	response := func(line string) {
+		data := line + "\r\n"
+		for data != "" {
+			client.conn.SetDeadline(time.Now().Add(gstmp_timeout))
+			size, err := client.bufout.WriteString(data)
+			if err != nil {
+				panic(err)
+			}
+			client.bufout.Flush()
+			data = data[size:]
+		}
+	}
+
+
+	/*
+	 * [todo] readUntil only works if suffix ends in '\n'
+	 * [todo] limmit length of string to be read during ReadString
+	 */
+	readUntil := func(suffix string) (string) {
+		input := ""
+
+		for ! strings.HasSuffix(input, suffix) {
+			client.conn.SetDeadline(time.Now().Add(gstmp_timeout))
+			reply, err := client.bufin.ReadString('\n')
+
+			if err == nil && reply != "" {
+				input = input + reply
+				if len(input) > GSMTP_MAX_SIZE {
+					err = errors.New("Maximum DATA size exceeded (" + strconv.Itoa(GSMTP_MAX_SIZE) + ")")
+				}
+			}
+
+			if err != nil {
+				panic(err)
+			}
+		}
+		return input
+	}
+
+	readAndDecodeBase64 := func() (string) {
+		input := readUntil("\r\n")
+		trimmed := strings.Trim(input, " \n\r")
+		return fromBase64(trimmed)
+	}
+
 	const authenticated = 0
 	const tls_off = 1
 	const tls_on = 2 
@@ -247,11 +295,11 @@ func handleClient(client *Client) {
 		for _, check := range args {
 			switch {
 				case check == authenticated && client.username == "":
-					responseAdd(client, "530 NOT ALLOWED"); return false
+					response("530 NOT ALLOWED"); return false
 				case check == tls_off && client.tls_on:
-					responseAdd(client, "530 NOT ALLOWED, TLS is already enabled"); return false
+					response("530 NOT ALLOWED, TLS is already enabled"); return false
 				case check == tls_on && !client.tls_on:
-					responseAdd(client, "530 NOT ALLOWED, must STARTTLS"); return false
+					response("530 NOT ALLOWED, must STARTTLS"); return false
 			}
 		}
 
@@ -261,7 +309,7 @@ func handleClient(client *Client) {
 	const state_control = 1
 	const state_data = 2 
 
-	responseAdd(client, fmt.Sprintf("220 %s SMTP kinko.smtpd"))
+	response(fmt.Sprintf("220 %s SMTP kinko.smtpd"))
 
 	client_state := state_control	// connection state
 	client_errors := 0				// number of errors in this connection
@@ -270,32 +318,32 @@ func handleClient(client *Client) {
 	for i := 0; i < 99; i++ {
 		switch client_state {
 		case state_control:
-			input := readClientUntil(client, "\r\n")
+			input := readUntil("\r\n")
 			input = strings.Trim(input, " \n\r")
 			
 			cmd, remainder := parseSmtpCommand(input)
 			switch cmd {
 			case HELO:
 				client.helo = remainder
-				responseAdd(client, "250 "+ GSMTP_HOST_NAME +" Hello ")
+				response("250 "+ GSMTP_HOST_NAME +" Hello ")
 			case EHLO:
 				client.helo = remainder
 
-				response := "250-"+ GSMTP_HOST_NAME +" Hello "+client.helo+"["+client.remote_addr+"]"+"\r\n"
-				response += "250-SIZE "+ strconv.Itoa(GSMTP_MAX_SIZE) +"\r\n"
+				msg := "250-"+ GSMTP_HOST_NAME +" Hello "+client.helo+"["+client.remote_addr+"]"+"\r\n"
+				msg += "250-SIZE "+ strconv.Itoa(GSMTP_MAX_SIZE) +"\r\n"
 				if ! client.tls_on {
-					response += "250-STARTTLS\r\n"
+					msg += "250-STARTTLS\r\n"
 				}
-				response += "250-AUTH PLAIN LOGIN\r\n"
-				response += "250 HELP "
+				msg += "250-AUTH PLAIN LOGIN\r\n"
+				msg += "250 HELP "
 
-				responseAdd(client, response)
+				response(msg)
 			case NOOP:
-				responseAdd(client, "250 OK")
+				response("250 OK")
 			case RSET:
 				client.mail_from = ""
 				client.rcpt_to = ""
-				responseAdd(client, "250 OK")
+				response("250 OK")
 			
 			/*
 			 * authentication 
@@ -308,26 +356,26 @@ func handleClient(client *Client) {
 				_, username, password := parseAuthPlain(remainder)
 				if authenticateUser(username, password) {
 					client.username = username
-					responseAdd(client, "235 ok, go ahead")
+					response("235 ok, go ahead")
 				} else {
-					responseAdd(client, "530 NOT ALLOWED")
+					response("530 NOT ALLOWED")
 				}
 			case AUTH_LOGIN:
 				if ! requires(tls_on) {
 					break
 				}
 
-				responseAdd(client, "334 VXNlcm5hbWU6")
-				username := readAndDecodeBase64FromClient(client)
+				response("334 VXNlcm5hbWU6")
+				username := readAndDecodeBase64()
 
-				responseAdd(client, "334 UGFzc3dvcmQ6")
-				password := readAndDecodeBase64FromClient(client)
+				response("334 UGFzc3dvcmQ6")
+				password := readAndDecodeBase64()
 
 				if authenticateUser(username, password) {
 					client.username = username
-					responseAdd(client, "235 ok, go ahead")
+					response("235 ok, go ahead")
 				} else {
-					responseAdd(client, "530 NOT ALLOWED")
+					response("530 NOT ALLOWED")
 				}
 
 			/*
@@ -339,7 +387,7 @@ func handleClient(client *Client) {
 				}
 
 				client.mail_from = remainder
-				responseAdd(client, "250 Ok")
+				response("250 Ok")
 			case RCPT_TO:
 				if ! requires(tls_on, authenticated) {
 					break
@@ -347,21 +395,21 @@ func handleClient(client *Client) {
 
 				// [todo] allow multiple recipients
 				client.rcpt_to = remainder
-				responseAdd(client, "250 Accepted")
+				response("250 Accepted")
 
 			case DATA:
 				if ! requires(tls_on, authenticated) {
 					break
 				}
 
-				responseAdd(client, "354 Enter message, ending with \".\" on a line by itself")
+				response("354 Enter message, ending with \".\" on a line by itself")
 				client_state = state_data
 			case STARTTLS:
 				if ! requires(tls_off) {
 					break
 				}
 
-				responseAdd(client, "220 Ready to start TLS")
+				response("220 Ready to start TLS")
 
 				// upgrade to TLS
 				tlsConn := tls.Server(client.conn, gstmp_tls_config)
@@ -377,18 +425,18 @@ func handleClient(client *Client) {
 				client.tls_on = true
 
 			case QUIT:
-				responseAdd(client, "221 Bye")
+				response("221 Bye")
 				return
 			default:
 				client_errors++
 				if client_errors > 3 {
-					responseAdd(client, "500 Too many unrecognized commands")
+					response("500 Too many unrecognized commands")
 					return
 				}
-				responseAdd(client, "500 unrecognized command")
+				response("500 unrecognized command")
 			}
 		case state_data:
-			client.data = readClientUntil(client, "\r\n.\r\n")
+			client.data = readUntil("\r\n.\r\n")
 			// [todo] add timeout handling.
 			//
 			// place the client on \a gstmp_save_mail_chan; one of 
@@ -397,9 +445,9 @@ func handleClient(client *Client) {
 			// wait for the save to complete
 			status := <-client.processStatus
 			if status {
-				responseAdd(client, "250 OK: " + client.processMessage)
+				response("250 OK: " + client.processMessage)
 			} else {
-				responseAdd(client, "554 Error: " + client.processMessage)
+				response("554 Error: " + client.processMessage)
 			}
 			client_state = state_control
 		}
@@ -428,53 +476,6 @@ func authenticateUser(username string, password string) bool {
 	}
 
 	return err == nil
-}
-
-/*
- * [todo] readClientUntil only works if suffix ends in '\n'
- * [todo] limmit length of string to be read during ReadString
- */
-func readClientUntil(client *Client, suffix string) (string) {
-	input := ""
-
-	for ! strings.HasSuffix(input, suffix) {
-		client.conn.SetDeadline(time.Now().Add(gstmp_timeout))
-		reply, err := client.bufin.ReadString('\n')
-
-		if err == nil && reply != "" {
-			input = input + reply
-			if len(input) > GSMTP_MAX_SIZE {
-				err = errors.New("Maximum DATA size exceeded (" + strconv.Itoa(GSMTP_MAX_SIZE) + ")")
-			}
-		}
-
-		if err != nil {
-			panic(err)
-		}
-	}
-	return input
-}
-
-func readAndDecodeBase64FromClient(client *Client) (string) {
-	input := readClientUntil(client, "\r\n")
-	trimmed := strings.Trim(input, " \n\r")
-	return fromBase64(trimmed)
-}
-
-/*
- * add CRLF to response and flush to client
- */
-func responseAdd(client *Client, line string) {
-	data := line + "\r\n"
-	for data != "" {
-		client.conn.SetDeadline(time.Now().Add(gstmp_timeout))
-		size, err := client.bufout.WriteString(data)
-		if err != nil {
-			panic(err)
-		}
-		client.bufout.Flush()
-		data = data[size:]
-	}
 }
 
 func processMail() {
