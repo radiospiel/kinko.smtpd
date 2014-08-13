@@ -237,10 +237,31 @@ func handleClient(client *Client) {
 		}
 	}()
 
-	var client_errors = 0		// number of errors in this connection
-	var client_state = 0		// 0: initiate, 
-								// 1: email control, 
-								// 3: email data
+	const authenticated = 0
+	const tls_off = 1
+	const tls_on = 2 
+
+	requires := func(args ...int) (bool) {
+		for _, check := range args {
+			switch {
+				case check == authenticated && client.username == "":
+					responseAdd(client, "530 NOT ALLOWED"); return false
+				case check == tls_off && client.tls_on:
+					responseAdd(client, "530 NOT ALLOWED, TLS is already enabled"); return false
+				case check == tls_on && !client.tls_on:
+					responseAdd(client, "530 NOT ALLOWED, must STARTTLS"); return false
+			}
+		}
+
+		return true
+	}
+
+	const state_initiate = 0
+	const state_control = 1
+	const state_data = 2 
+
+	client_state := state_initiate	// connection state
+	client_errors := 0				// number of errors in this connection
 
 	/* up to 100 commands in a single session. */
 	for i := 0; i < 100; i++ {
@@ -280,8 +301,7 @@ func handleClient(client *Client) {
 			 * authentication 
 			 */
 			case AUTH_PLAIN:
-				if ! client.tls_on {
-					responseAdd(client, "530 NOT ALLOWED, must STARTTLS")
+				if ! requires(tls_on) {
 					break
 				}
 
@@ -293,8 +313,7 @@ func handleClient(client *Client) {
 					responseAdd(client, "530 NOT ALLOWED")
 				}
 			case AUTH_LOGIN:
-				if ! client.tls_on {
-					responseAdd(client, "530 NOT ALLOWED, must STARTTLS")
+				if ! requires(tls_on) {
 					break
 				}
 
@@ -315,51 +334,30 @@ func handleClient(client *Client) {
 			 * receive email
 			 */ 
 			case MAIL_FROM:
-				if ! client.tls_on {
-					responseAdd(client, "530 NOT ALLOWED, must STARTTLS")
+				if ! requires(tls_on, authenticated) {
 					break
 				}
 
-				if client.username == "" {
-					responseAdd(client, "530 NOT ALLOWED")
-					break
-				} 
-
-				if len(input) > 10 {
-					client.mail_from = remainder
-				}
+				client.mail_from = remainder
 				responseAdd(client, "250 Ok")
 			case RCPT_TO:
-				if ! client.tls_on {
-					responseAdd(client, "530 NOT ALLOWED, must STARTTLS")
+				if ! requires(tls_on, authenticated) {
 					break
 				}
-
-				if client.username == "" {
-					responseAdd(client, "530 NOT ALLOWED")
-					break
-				} 
 
 				// [todo] allow multiple recipients
 				client.rcpt_to = remainder
 				responseAdd(client, "250 Accepted")
 
 			case DATA:
-				if ! client.tls_on {
-					responseAdd(client, "530 NOT ALLOWED, must STARTTLS")
+				if ! requires(tls_on, authenticated) {
 					break
 				}
-
-				if client.username == "" {
-					responseAdd(client, "530 NOT ALLOWED")
-					break
-				} 
 
 				responseAdd(client, "354 Enter message, ending with \".\" on a line by itself")
 				client_state = 3
 			case STARTTLS:
-				if client.tls_on {
-					responseAdd(client, "530 NOT ALLOWED, TLS is already enabled")
+				if ! requires(tls_off) {
 					break
 				}
 
