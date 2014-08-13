@@ -308,15 +308,18 @@ func handleClient(client *Client) {
 
 	const state_control = 1
 	const state_data = 2 
+	var STATE int 
+	BEGIN := func(state int) { STATE = state }
+	BEGIN(state_control)	// connection state
+
+	client_errors := 0				// number of errors in this connection
 
 	response(fmt.Sprintf("220 %s SMTP kinko.smtpd"))
 
-	client_state := state_control	// connection state
-	client_errors := 0				// number of errors in this connection
 
 	/* up to 99 commands in a single session. */
 	for i := 0; i < 99; i++ {
-		switch client_state {
+		switch STATE {
 		case state_control:
 			input := readUntil("\r\n")
 			input = strings.Trim(input, " \n\r")
@@ -444,7 +447,7 @@ func handleClient(client *Client) {
 				}
 
 				response("354 Enter message, ending with \".\" on a line by itself")
-				client_state = state_data
+				BEGIN(state_data)
 			}
 		case state_data:
 			client.data = readUntil("\r\n.\r\n")
@@ -460,7 +463,7 @@ func handleClient(client *Client) {
 			} else {
 				response("554 Error: " + client.processMessage)
 			}
-			client_state = state_control
+			BEGIN(state_control)
 		}
 	}
 }
