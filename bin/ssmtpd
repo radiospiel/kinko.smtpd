@@ -422,7 +422,8 @@ func closeClient(client *Client) {
  * [todo] readClientUntil only works if suffix ends in '\n'
  * [todo] limmit length of string to be read during ReadString
  */
-func readClientUntil(client *Client, suffix string) (input string) {
+func readClientUntil(client *Client, suffix string) (string) {
+	input := ""
 
 	for ! strings.HasSuffix(input, suffix) {
 		client.conn.SetDeadline(time.Now().Add(gstmp_timeout))
@@ -512,6 +513,7 @@ func firstLine(buf bytes.Buffer) string {
 	
 	return ""
 }
+
 func fromBase64(data string) string {
 	buf := bytes.NewBufferString(data)
 	decoder := base64.NewDecoder(base64.StdEncoding, buf)
