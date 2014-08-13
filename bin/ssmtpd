@@ -256,20 +256,18 @@ func handleClient(client *Client) {
 		return true
 	}
 
-	const state_initiate = 0
 	const state_control = 1
 	const state_data = 2 
 
-	client_state := state_initiate	// connection state
+	responseAdd(client, fmt.Sprintf("220 %s SMTP kinko.smtpd"))
+
+	client_state := state_control	// connection state
 	client_errors := 0				// number of errors in this connection
 
-	/* up to 100 commands in a single session. */
-	for i := 0; i < 100; i++ {
+	/* up to 99 commands in a single session. */
+	for i := 0; i < 99; i++ {
 		switch client_state {
-		case 0:
-			responseAdd(client, fmt.Sprintf("220 %s SMTP kinko.smtpd"))
-			client_state = 1
-		case 1:
+		case state_control:
 			input := readClientUntil(client, "\r\n")
 			input = strings.Trim(input, " \n\r")
 			
@@ -355,7 +353,7 @@ func handleClient(client *Client) {
 				}
 
 				responseAdd(client, "354 Enter message, ending with \".\" on a line by itself")
-				client_state = 3
+				client_state = state_data
 			case STARTTLS:
 				if ! requires(tls_off) {
 					break
@@ -387,7 +385,7 @@ func handleClient(client *Client) {
 				}
 				responseAdd(client, "500 unrecognized command")
 			}
-		case 3:
+		case state_data:
 			client.data = readClientUntil(client, "\r\n.\r\n")
 			// [todo] add timeout handling.
 			//
@@ -401,7 +399,7 @@ func handleClient(client *Client) {
 			} else {
 				responseAdd(client, "554 Error: " + client.processMessage)
 			}
-			client_state = 1
+			client_state = state_control
 		}
 	}
 }
