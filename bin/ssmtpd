@@ -86,24 +86,26 @@ var gstmp_save_mail_chan chan *Client	   // workers for processing mail.
 /* -- a client ------------------------------------------------------------- */
 
 type Client struct {
-	state		int
-	helo		string
-	mail_from	string
-	rcpt_to		string
-	read_buffer string
-	response	string
-	address		string
-	data		string
-	tls_on		bool
+	clientId	int64			// id of client connection.
+	state		int 			// 0: initiate, 
+								// 1: email control, 
+								// 2: upgrade to TLS, 
+								// 3: email data
+	helo		string			// helo as sent from client
+	tls_on		bool			// set after switched to TLS
+	username	string			// username after successful authentication
+	mail_from	string			// FROM via SMTP protocol
+	rcpt_to		string			// RCPT via SMTP protocol
+	remote_addr	string			// client address
+	data		string			// mail data
 	conn		net.Conn
 	bufin		*bufio.Reader
 	bufout		*bufio.Writer
-	kill_time	int64
-	errors		int
-	clientId	int64
+	kill_client	bool			// set to true to finish this connection	
+	response	string			// buffer for response message
+	errors		int 			// number of errors in this connection
+	processMessage string		// result message of email processing
 	processStatus chan bool
-	processMessage string
-	username	string
 }
 
 func fatal(s string) {
@@ -175,12 +177,12 @@ func main() {
 		warn("Currently " +strconv.Itoa(runtime.NumGoroutine())+ " serving goroutines")
 		gstmp_sem <- 1 // Wait for active queue to drain.
 		go handleClient(&Client{
-			conn:		 conn,
-			address:	 conn.RemoteAddr().String(),
-			bufin:		 bufio.NewReader(conn),
-			bufout:		 bufio.NewWriter(conn),
-			clientId:	 clientId,
-			processStatus: make(chan bool),
+			conn:			conn,
+			remote_addr:	conn.RemoteAddr().String(),
+			bufin:		 	bufio.NewReader(conn),
+			bufout:		 	bufio.NewWriter(conn),
+			clientId:	 	clientId,
+			processStatus:	make(chan bool),
 		})
 		clientId++
 	}
@@ -228,7 +230,7 @@ func handleClient(client *Client) {
 					client.helo = input[5:]
 				}
 
-				response := "250-"+ GSMTP_HOST_NAME +" Hello "+client.helo+"["+client.address+"]"+"\r\n"
+				response := "250-"+ GSMTP_HOST_NAME +" Hello "+client.helo+"["+client.remote_addr+"]"+"\r\n"
 				response += "250-SIZE "+ strconv.Itoa(GSMTP_MAX_SIZE) +"\r\n"
 				if ! client.tls_on {
 					response += "250-STARTTLS\r\n"
@@ -355,23 +357,37 @@ func handleClient(client *Client) {
 				} 
 
 				responseAdd(client, "354 Enter message, ending with \".\" on a line by itself")
-				client.state = 2
+				client.state = 3
 			case (strings.Index(cmd, "STARTTLS") == 0) && !client.tls_on:
 				responseAdd(client, "220 Ready to start TLS")
 				// go to start TLS state
-				client.state = 3
+				client.state = 2
 			case strings.Index(cmd, "QUIT") == 0:
 				responseAdd(client, "221 Bye")
-				killClient(client)
+				client.kill_client = true
 			default:
 				responseAdd(client, fmt.Sprintf("500 unrecognized command"))
 				client.errors++
 				if client.errors > 3 {
 					responseAdd(client, fmt.Sprintf("500 Too many unrecognized commands"))
-					killClient(client)
+					client.kill_client = true
 				}
 			}
 		case 2:
+			// upgrade to TLS
+			var tlsConn *tls.Conn
+			tlsConn = tls.Server(client.conn, gstmp_tls_config)
+			err := tlsConn.Handshake() // not necessary to call here, but might as well
+			if err == nil {
+				client.conn = net.Conn(tlsConn)
+				client.bufin = bufio.NewReader(client.conn)
+				client.bufout = bufio.NewWriter(client.conn)
+				client.tls_on = true
+			} else {
+				warn(fmt.Sprintf("Could not TLS handshake:%v", err))
+			}
+			client.state = 1
+		case 3:
 			var err error
 			client.data, err = readClientUntil(client, "\r\n.\r\n")
 			if err == nil {
@@ -399,20 +415,6 @@ func handleClient(client *Client) {
 				warn(fmt.Sprintf("DATA read error: %v", err))
 			}
 			client.state = 1
-		case 3:
-			// upgrade to TLS
-			var tlsConn *tls.Conn
-			tlsConn = tls.Server(client.conn, gstmp_tls_config)
-			err := tlsConn.Handshake() // not necessary to call here, but might as well
-			if err == nil {
-				client.conn = net.Conn(tlsConn)
-				client.bufin = bufio.NewReader(client.conn)
-				client.bufout = bufio.NewWriter(client.conn)
-				client.tls_on = true
-			} else {
-				warn(fmt.Sprintf("Could not TLS handshake:%v", err))
-			}
-			client.state = 1
 		}
 		// Send a response back to the client
 		err := responseWrite(client)
@@ -426,7 +428,7 @@ func handleClient(client *Client) {
 				return
 			}
 		}
-		if client.kill_time > 1 {
+		if client.kill_client {
 			return
 		}
 	}
@@ -462,9 +464,6 @@ func responseAdd(client *Client, line string) {
 func closeClient(client *Client) {
 	client.conn.Close()
 	<-gstmp_sem // Done; enable next client to run.
-}
-func killClient(client *Client) {
-	client.kill_time = time.Now().Unix()
 }
 
 func readClientUntil(client *Client, suffix string) (input string, err error) {
@@ -511,7 +510,7 @@ func processMail() {
 					client.mail_from, 
 					client.rcpt_to,
 					client.username, 
-					client.address))
+					client.remote_addr))
 
 		var err error
 
