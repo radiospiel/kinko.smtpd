@@ -182,6 +182,42 @@ func main() {
 	}
 }
 
+/*
+ * parse SMTP commands.
+ */
+
+const HELO			= "HELO"
+const EHLO			= "EHLO"
+const NOOP			= "NOOP"
+const RSET			= "RSET"
+const AUTH_PLAIN	= "AUTH PLAIN " // note space at end!
+const AUTH_LOGIN	= "AUTH LOGIN"
+const MAIL_FROM		= "MAIL FROM:"
+const RCPT_TO		= "RCPT TO:"
+const DATA			= "DATA"
+const STARTTLS		= "STARTTLS"
+const QUIT			= "QUIT"
+
+func parseSmtpCommand(input string) (cmd string, remainder string) {
+	upcase := strings.ToUpper(input)
+
+	commands := []string{
+		HELO, EHLO, NOOP, RSET, STARTTLS, QUIT,
+		AUTH_PLAIN, AUTH_LOGIN,
+		MAIL_FROM, RCPT_TO,
+		DATA}
+
+	for idx := range commands {
+		cmd = commands[idx]
+		if strings.Index(upcase, cmd) == 0 {
+			remainder = input[len(cmd):]
+			return cmd, remainder
+		}
+	}
+
+	return "", ""
+}
+
 func handleClient(client *Client) {
 	defer closeClient(client)
 
@@ -216,18 +252,14 @@ func handleClient(client *Client) {
 		case 1:
 			input := readClientUntil(client, "\r\n")
 			input = strings.Trim(input, " \n\r")
-			cmd := strings.ToUpper(input)
-			// warn(fmt.Sprintf("cmd: %s", cmd))
-			switch {
-			case strings.Index(cmd, "HELO") == 0:
-				if len(input) > 5 {
-					client.helo = input[5:]
-				}
+			
+			cmd, remainder := parseSmtpCommand(input)
+			switch cmd {
+			case HELO:
+				client.helo = remainder
 				responseAdd(client, "250 "+ GSMTP_HOST_NAME +" Hello ")
-			case strings.Index(cmd, "EHLO") == 0:
-				if len(input) > 5 {
-					client.helo = input[5:]
-				}
+			case EHLO:
+				client.helo = remainder
 
 				response := "250-"+ GSMTP_HOST_NAME +" Hello "+client.helo+"["+client.remote_addr+"]"+"\r\n"
 				response += "250-SIZE "+ strconv.Itoa(GSMTP_MAX_SIZE) +"\r\n"
@@ -239,9 +271,9 @@ func handleClient(client *Client) {
 
 				responseAdd(client, response)
 
-			case strings.Index(cmd, "NOOP") == 0:
+			case NOOP:
 				responseAdd(client, "250 OK")
-			case strings.Index(cmd, "RSET") == 0:
+			case RSET:
 				client.mail_from = ""
 				client.rcpt_to = ""
 				responseAdd(client, "250 OK")
@@ -249,20 +281,20 @@ func handleClient(client *Client) {
 			/*
 			 * authentication 
 			 */
-			case strings.Index(cmd, "AUTH PLAIN ") == 0:
+			case AUTH_PLAIN:
 				if ! client.tls_on {
 					responseAdd(client, "530 NOT ALLOWED, must STARTTLS")
 					break
 				}
 
-				_, username, password := parseAuthPlain(input[11:])
+				_, username, password := parseAuthPlain(remainder)
 				if authenticateUser(username, password) {
 					client.username = username
 					responseAdd(client, "235 ok, go ahead")
 				} else {
 					responseAdd(client, "530 NOT ALLOWED")
 				}
-			case strings.Index(cmd, "AUTH LOGIN") == 0:
+			case AUTH_LOGIN:
 				if ! client.tls_on {
 					responseAdd(client, "530 NOT ALLOWED, must STARTTLS")
 					break
@@ -284,7 +316,7 @@ func handleClient(client *Client) {
 			/*
 			 * receive email
 			 */ 
-			case strings.Index(cmd, "MAIL FROM:") == 0:
+			case MAIL_FROM:
 				if ! client.tls_on {
 					responseAdd(client, "530 NOT ALLOWED, must STARTTLS")
 					break
@@ -296,10 +328,10 @@ func handleClient(client *Client) {
 				} 
 
 				if len(input) > 10 {
-					client.mail_from = input[10:]
+					client.mail_from = remainder
 				}
 				responseAdd(client, "250 Ok")
-			case strings.Index(cmd, "RCPT TO:") == 0:
+			case RCPT_TO:
 				if ! client.tls_on {
 					responseAdd(client, "530 NOT ALLOWED, must STARTTLS")
 					break
@@ -311,12 +343,10 @@ func handleClient(client *Client) {
 				} 
 
 				// [todo] allow multiple recipients
-				if len(input) > 8 {
-					client.rcpt_to = input[8:]
-				}
+				client.rcpt_to = remainder
 				responseAdd(client, "250 Accepted")
 
-			case strings.Index(cmd, "DATA") == 0:
+			case DATA:
 				if ! client.tls_on {
 					responseAdd(client, "530 NOT ALLOWED, must STARTTLS")
 					break
@@ -329,7 +359,12 @@ func handleClient(client *Client) {
 
 				responseAdd(client, "354 Enter message, ending with \".\" on a line by itself")
 				client_state = 3
-			case (strings.Index(cmd, "STARTTLS") == 0) && !client.tls_on:
+			case STARTTLS:
+				if client.tls_on {
+					responseAdd(client, "530 NOT ALLOWED, TLS is already enabled")
+					break
+				}
+
 				responseAdd(client, "220 Ready to start TLS")
 
 				// upgrade to TLS
@@ -345,7 +380,7 @@ func handleClient(client *Client) {
 				client.bufout = bufio.NewWriter(client.conn)
 				client.tls_on = true
 
-			case strings.Index(cmd, "QUIT") == 0:
+			case QUIT:
 				responseAdd(client, "221 Bye")
 				client.kill_client = true
 			default:
