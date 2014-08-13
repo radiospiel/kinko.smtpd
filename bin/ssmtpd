@@ -206,8 +206,7 @@ func parseSmtpCommand(input string) (cmd string, remainder string) {
 		MAIL_FROM, RCPT_TO,
 		DATA}
 
-	for idx := range commands {
-		cmd = commands[idx]
+	for _, cmd := range commands {
 		if strings.Index(upcase, cmd) == 0 {
 			remainder = input[len(cmd):]
 			return cmd, remainder
