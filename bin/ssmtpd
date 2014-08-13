@@ -191,25 +191,31 @@ func main() {
 func handleClient(client *Client) {
 	defer closeClient(client)
 
+	defer func() {
+		err := recover()
+		switch {
+		case err == nil:
+			;
+		case err == io.EOF:
+			warn(fmt.Sprintf("Client closed connection: %v", err))
+		default:
+			neterr, ok := err.(net.Error);
+			if ok && neterr.Timeout() {
+				warn(fmt.Sprintf("Client timed out: %v", err))
+			} else {
+				warn(fmt.Sprintf("Client IO error: %v", err))
+			}
+		}
+	}()
+
+	/* up to 100 commands in a single session. */
 	for i := 0; i < 100; i++ {
 		switch client.state {
 		case 0:
 			responseAdd(client, fmt.Sprintf("220 %s SMTP kinko.smtpd"))
 			client.state = 1
 		case 1:
-			input, err := readClientUntil(client, "\r\n")
-			if err != nil {
-				warn(fmt.Sprintf("Read error: %v", err))
-				if err == io.EOF {
-					// client closed the connection already
-					return
-				}
-				if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
-					// too slow, timeout
-					return
-				}
-				break
-			}
+			input := readClientUntil(client, "\r\n")
 			input = strings.Trim(input, " \n\r")
 			cmd := strings.ToUpper(input)
 			// warn(fmt.Sprintf("cmd: %s", cmd))
@@ -291,48 +297,24 @@ func handleClient(client *Client) {
 
 				responseAdd(client, "334 VXNlcm5hbWU6")
 				responseWrite(client)
-				
+
 				var username string
 				{
-					input, err := readClientUntil(client, "\r\n")
-					if err != nil {
-						warn(fmt.Sprintf("Read error: %v", err))
-						if err == io.EOF {
-							// client closed the connection already
-							return
-						}
-						if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
-							// too slow, timeout
-							return
-						}
-						break
-					}
+					input := readClientUntil(client, "\r\n")
 					username = strings.Trim(input, " \n\r")
 					username = fromBase64(username)
 				}
 
 				responseAdd(client, "334 UGFzc3dvcmQ6")
 				responseWrite(client)
-				
+
 				var password string
 				{
-					input, err := readClientUntil(client, "\r\n")
-					if err != nil {
-						warn(fmt.Sprintf("Read error: %v", err))
-						if err == io.EOF {
-							// client closed the connection already
-							return
-						}
-						if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
-							// too slow, timeout
-							return
-						}
-						break
-					}
+					input := readClientUntil(client, "\r\n")
 					password = strings.Trim(input, " \n\r")
 					password = fromBase64(password)
 				}
-				
+
 				if authenticateUser(username, password) {
 					client.username = username
 					responseAdd(client, "235 ok, go ahead")
@@ -382,46 +364,32 @@ func handleClient(client *Client) {
 			}
 			client.state = 1
 		case 3:
-			var err error
-			client.data, err = readClientUntil(client, "\r\n.\r\n")
-			if err == nil {
-				// [todo] add timeout handling.
-				//
-				// place the client on \a gstmp_save_mail_chan; one of 
-				// the processMail workers will pick it up
-				gstmp_save_mail_chan <- client
-				// wait for the save to complete
-				status := <-client.processStatus
+			client.data = readClientUntil(client, "\r\n.\r\n")
+			// [todo] add timeout handling.
+			//
+			// place the client on \a gstmp_save_mail_chan; one of 
+			// the processMail workers will pick it up
+			gstmp_save_mail_chan <- client
+			// wait for the save to complete
+			status := <-client.processStatus
 
-				processMessage := client.processMessage
-				if status {
-					if processMessage == "" {
-						processMessage = "Success"
-					}
-					responseAdd(client, "250 OK: " + processMessage)
-				} else {
-					if processMessage == "" {
-						processMessage = "Unknown error"
-					}
-					responseAdd(client, "554 Error: " + processMessage)
+			processMessage := client.processMessage
+			if status {
+				if processMessage == "" {
+					processMessage = "Success"
 				}
+				responseAdd(client, "250 OK: " + processMessage)
 			} else {
-				warn(fmt.Sprintf("DATA read error: %v", err))
+				if processMessage == "" {
+					processMessage = "Unknown error"
+				}
+				responseAdd(client, "554 Error: " + processMessage)
 			}
 			client.state = 1
 		}
 		// Send a response back to the client
-		err := responseWrite(client)
-		if err != nil {
-			if err == io.EOF {
-				// client closed the connection already
-				return
-			}
-			if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
-				// too slow, timeout
-				return
-			}
-		}
+		responseWrite(client)
+
 		if client.kill_client {
 			return
 		}
@@ -460,36 +428,38 @@ func closeClient(client *Client) {
 	<-gstmp_sem // Done; enable next client to run.
 }
 
-func readClientUntil(client *Client, suffix string) (input string, err error) {
-	var reply string
+/*
+ * [todo] readClientUntil only works if suffix ends in '\n'
+ * [todo] limmit length of string to be read during ReadString
+ */
+func readClientUntil(client *Client, suffix string) (input string) {
 
-	for err == nil {
+	for ! strings.HasSuffix(input, suffix) {
 		client.conn.SetDeadline(time.Now().Add(gstmp_timeout))
-		reply, err = client.bufin.ReadString('\n')
-		if reply != "" {
+		reply, err := client.bufin.ReadString('\n')
+
+		if err == nil && reply != "" {
 			input = input + reply
 			if len(input) > GSMTP_MAX_SIZE {
 				err = errors.New("Maximum DATA size exceeded (" + strconv.Itoa(GSMTP_MAX_SIZE) + ")")
-				return input, err
 			}
 		}
+
 		if err != nil {
-			break
-		}
-		if strings.HasSuffix(input, suffix) {
-			break
+			panic(err)
 		}
 	}
-	return input, err
+	return input
 }
 
-func responseWrite(client *Client) (err error) {
-	var size int
+func responseWrite(client *Client) {
 	client.conn.SetDeadline(time.Now().Add(gstmp_timeout))
-	size, err = client.bufout.WriteString(client.response)
+	size, err := client.bufout.WriteString(client.response)
+	if err != nil {
+		panic(err)
+	}
 	client.bufout.Flush()
 	client.response = client.response[size:]
-	return err
 }
 
 func processMail() {
