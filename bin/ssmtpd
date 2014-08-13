@@ -87,10 +87,6 @@ var gstmp_save_mail_chan chan *Client	   // workers for processing mail.
 
 type Client struct {
 	clientId	int64			// id of client connection.
-	state		int 			// 0: initiate, 
-								// 1: email control, 
-								// 2: upgrade to TLS, 
-								// 3: email data
 	helo		string			// helo as sent from client
 	tls_on		bool			// set after switched to TLS
 	username	string			// username after successful authentication
@@ -102,7 +98,6 @@ type Client struct {
 	bufin		*bufio.Reader
 	bufout		*bufio.Writer
 	kill_client	bool			// set to true to finish this connection	
-	errors		int 			// number of errors in this connection
 	processMessage string		// result message of email processing
 	processStatus chan bool
 }
@@ -207,12 +202,18 @@ func handleClient(client *Client) {
 		}
 	}()
 
+	var client_errors = 0		// number of errors in this connection
+	var client_state = 0		// 0: initiate, 
+								// 1: email control, 
+								// 2: upgrade to TLS, 
+								// 3: email data
+
 	/* up to 100 commands in a single session. */
 	for i := 0; i < 100; i++ {
-		switch client.state {
+		switch client_state {
 		case 0:
 			responseAdd(client, fmt.Sprintf("220 %s SMTP kinko.smtpd"))
-			client.state = 1
+			client_state = 1
 		case 1:
 			input := readClientUntil(client, "\r\n")
 			input = strings.Trim(input, " \n\r")
@@ -328,18 +329,18 @@ func handleClient(client *Client) {
 				} 
 
 				responseAdd(client, "354 Enter message, ending with \".\" on a line by itself")
-				client.state = 3
+				client_state = 3
 			case (strings.Index(cmd, "STARTTLS") == 0) && !client.tls_on:
 				responseAdd(client, "220 Ready to start TLS")
 				// go to start TLS state
-				client.state = 2
+				client_state = 2
 			case strings.Index(cmd, "QUIT") == 0:
 				responseAdd(client, "221 Bye")
 				client.kill_client = true
 			default:
 				responseAdd(client, fmt.Sprintf("500 unrecognized command"))
-				client.errors++
-				if client.errors > 3 {
+				client_errors++
+				if client_errors > 3 {
 					responseAdd(client, fmt.Sprintf("500 Too many unrecognized commands"))
 					client.kill_client = true
 				}
@@ -357,7 +358,7 @@ func handleClient(client *Client) {
 			} else {
 				warn(fmt.Sprintf("Could not TLS handshake:%v", err))
 			}
-			client.state = 1
+			client_state = 1
 		case 3:
 			client.data = readClientUntil(client, "\r\n.\r\n")
 			// [todo] add timeout handling.
@@ -372,7 +373,7 @@ func handleClient(client *Client) {
 			} else {
 				responseAdd(client, "554 Error: " + client.processMessage)
 			}
-			client.state = 1
+			client_state = 1
 		}
 
 		if client.kill_client {
