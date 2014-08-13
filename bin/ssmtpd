@@ -367,18 +367,10 @@ func handleClient(client *Client) {
 			gstmp_save_mail_chan <- client
 			// wait for the save to complete
 			status := <-client.processStatus
-
-			processMessage := client.processMessage
 			if status {
-				if processMessage == "" {
-					processMessage = "Success"
-				}
-				responseAdd(client, "250 OK: " + processMessage)
+				responseAdd(client, "250 OK: " + client.processMessage)
 			} else {
-				if processMessage == "" {
-					processMessage = "Unknown error"
-				}
-				responseAdd(client, "554 Error: " + processMessage)
+				responseAdd(client, "554 Error: " + client.processMessage)
 			}
 			client.state = 1
 		}
@@ -492,6 +484,14 @@ func processMail() {
 			cmd.Stdout = &out
 			err = cmd.Run()
 			client.processMessage = firstLine(out)
+			switch {
+				case client.processMessage != "":
+					;
+				case err != nil:
+					client.processMessage = "Unknown error"
+				default:
+					client.processMessage = "Success"
+			}
 		}
 
 		if err != nil {
