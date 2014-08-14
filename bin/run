@@ -16,5 +16,4 @@ exec $ssmtpd                                            \
         --port 8025                                     \
         --ssl-key       $SSL_KEY                        \
         --ssl-cert      $SSL_CERT                       \
-        --accounts-db   var/accounts.sqlite3            \
-        --filter        kinko.mailqueue.forward
+        --process       kinko.mailqueue.forward
