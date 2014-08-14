@@ -1,24 +1,18 @@
 #!/bin/bash
 set -eu
-
-die() {
-  echo "$@" >&2
-  exit 1
-}
+set -o pipefail
 
 if [ -z "$KINKO_ROOT" ]; then
   KINKO_ROOT=$(realpath $(dirname $0)/../../..)
 fi
 
-export SSL_CERT=$KINKO_ROOT/var/public/connectivity/shared/openssl.cert
-export SSL_KEY=$KINKO_ROOT/var/public/connectivity/shared/openssl.priv
-
-[ -e $SSL_CERT ] || die "Missing SSL_CERT: $SSL_CERT"
-[ -e $SSL_KEY ] || die "Missing SSL_KEY: $SSL_KEY"
+SSL_CERT=$KINKO_ROOT/var/public/connectivity/shared/openssl.cert
+SSL_KEY=$KINKO_ROOT/var/public/connectivity/shared/openssl.priv
 
 ssmtpd=$(dirname $BASH_SOURCE)/ssmtpd
 exec $ssmtpd                                            \
-        --hostname `kinko name`                         \
+        --auth          $BASH_SOURCE.auth               \
+        --hostname      `kinko name`                    \
         --port 8025                                     \
         --ssl-key       $SSL_KEY                        \
         --ssl-cert      $SSL_CERT                       \
