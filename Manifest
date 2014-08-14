@@ -9,3 +9,6 @@ permissions=
 
 # which permissions are required by this application?
 requires=frontend.authenticate
+
+# which daemons?
+daemons=run
