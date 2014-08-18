@@ -298,8 +298,8 @@ func handleClient(client *Client) {
 					response("530 NOT ALLOWED"); return false
 				case check == tls_off && client.tls_on:
 					response("530 NOT ALLOWED, TLS is already enabled"); return false
-				case check == tls_on && !client.tls_on:
-					response("530 NOT ALLOWED, must STARTTLS"); return false
+				// case check == tls_on && !client.tls_on:
+				// 	response("530 NOT ALLOWED, must STARTTLS"); return false
 			}
 		}
 
