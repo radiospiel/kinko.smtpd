@@ -1,7 +1,8 @@
 #!/bin/bash
 set -eu
 
-export KINKO:USERNAME="$USERNAME"
-export KINKO:PASSWORD="$PASSWORD"
+
+export KINKO_USERNAME="$SSMTPD_USERNAME"
+export KINKO_PASSWORD="$SSMTPD_PASSWORD"
 
 exec kinko.frontend.authenticate -q
