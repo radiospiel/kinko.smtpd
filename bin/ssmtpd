@@ -87,10 +87,7 @@ var gstmp_save_mail_chan chan *Client	   // workers for processing mail.
 
 type Client struct {
 	clientId	int64			// id of client connection.
-	tls_on		bool			// set after switched to TLS
 	conn		net.Conn
-	bufin		*bufio.Reader
-	bufout		*bufio.Writer
 }
 
 const fatal = 0
@@ -192,10 +189,7 @@ func main() {
 		Log(info, "Currently " +strconv.Itoa(runtime.NumGoroutine())+ " serving goroutines")
 		gstmp_sem <- 1 // Wait for active queue to drain.
 		go handleClient(&Client{
-			tls_on:			GSMTP_TLS == "ssl",
 			conn:			conn,
-			bufin:			bufio.NewReader(conn),
-			bufout:			bufio.NewWriter(conn),
 			clientId:		clientId,
 		})
 		clientId++
@@ -203,6 +197,9 @@ func main() {
 }
 
 func handleClient(client *Client) {
+	tls_on := GSMTP_TLS == "ssl"
+	bufin := bufio.NewReader(client.conn)
+	bufout := bufio.NewWriter(client.conn)
 	starts_at := time.Now()
 
 	var helo string					// helo as sent from client
@@ -257,9 +254,9 @@ func handleClient(client *Client) {
 		data := line + "\r\n"
 		for data != "" {
 			client.conn.SetDeadline(time.Now().Add(gstmp_timeout))
-			size, err := client.bufout.WriteString(data)
+			size, err := bufout.WriteString(data)
 			CheckError(err)
-			client.bufout.Flush()
+			bufout.Flush()
 			data = data[size:]
 		}
 	}
@@ -273,7 +270,7 @@ func handleClient(client *Client) {
 
 		for ! strings.HasSuffix(input, suffix) {
 			client.conn.SetDeadline(time.Now().Add(gstmp_timeout))
-			reply, err := client.bufin.ReadString('\n')
+			reply, err := bufin.ReadString('\n')
 			CheckError(err)
 
 			if reply != "" {
@@ -296,13 +293,13 @@ func handleClient(client *Client) {
 		return true
 	}
 	TLS_OFF := func()(bool) {
-		if(client.tls_on) {
+		if(tls_on) {
 			response("530 NOT ALLOWED, TLS is already enabled"); return false
 		}
 		return true
 	}
 	TLS_ON := func()(bool) {
-		if(!client.tls_on && GSMTP_TLS != "optional") {
+		if(!tls_on && GSMTP_TLS != "optional") {
 			response("530 NOT ALLOWED, must STARTTLS"); return false
 		}
 		return true
@@ -338,7 +335,7 @@ func handleClient(client *Client) {
 
 		msg := "250-"+ GSMTP_HOST_NAME +" Hello "+helo+"["+remote_addr+"]"+"\r\n"
 		msg += "250-SIZE "+ strconv.Itoa(GSMTP_MAX_SIZE) +"\r\n"
-		if ! client.tls_on {
+		if ! tls_on {
 			msg += "250-STARTTLS\r\n"
 		}
 		msg += "250-AUTH PLAIN LOGIN\r\n"
@@ -368,9 +365,9 @@ func handleClient(client *Client) {
 		CheckError(tlsConn.Handshake())
 
 		client.conn = net.Conn(tlsConn)
-		client.bufin = bufio.NewReader(client.conn)
-		client.bufout = bufio.NewWriter(client.conn)
-		client.tls_on = true
+		bufin = bufio.NewReader(client.conn)
+		bufout = bufio.NewWriter(client.conn)
+		tls_on = true
 	})
 
 	/*
