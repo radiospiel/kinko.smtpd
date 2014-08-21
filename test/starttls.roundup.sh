@@ -1,5 +1,5 @@
 #!/usr/bin/env roundup
-describe "tests TLS connection requirements"
+describe "tests STARTTLS connection requirements"
 
 . testhelper.inc
 
