@@ -382,14 +382,13 @@ func handleClient(client *Client) {
 
 	response(fmt.Sprintf("220 %s SMTP kinko.smtpd"))
 
-	/* up to 99 commands in a single session. */
-	for i := 0; i < 99; i++ {
-		input := readUntil("\r\n")
-		input = strings.Trim(input, " \n\r")
-			
-		cmd, remainder := parseSmtpCommand(input)
+	/* 
+	 * process the SMTP command \a cmd with remaining data \a remainder.
+	 *
+	 * returns true if this command completes the SMTP session.
+	 */
+	processSmtpCommand := func(cmd string, remainder string) (done bool){
 		switch cmd {
-
 			/*
 			 * general commands
 			 */
@@ -397,7 +396,7 @@ func handleClient(client *Client) {
 				client_errors++
 				if client_errors > 3 {
 					response("500 Too many unrecognized commands")
-					return
+					return true
 				}
 				response("500 unrecognized command")
 			case HELO:
@@ -422,7 +421,7 @@ func handleClient(client *Client) {
 				response("250 OK")
 			case QUIT:
 				response("221 Bye")
-				return
+				return true
 
 			/*
 			 * upgrade to TLS
@@ -498,6 +497,19 @@ func handleClient(client *Client) {
 				// [todo] add timeout handling.
 				data := readUntil("\r\n.\r\n")
 				processMail(data)
+		}
+		
+		return false
+	}
+	
+	/* up to 99 commands in a single session. */
+	for i := 0; i < 99; i++ {
+		input := readUntil("\r\n")
+		input = strings.Trim(input, " \n\r")
+			
+		cmd, remainder := parseSmtpCommand(input)
+		if processSmtpCommand(cmd, remainder) {
+			break;
 		}
 	}
 }
