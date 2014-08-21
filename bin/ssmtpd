@@ -286,21 +286,33 @@ func handleClient(client *Client) {
 		return input
 	}
 
-	const AUTHENTICATED = 0
-	const TLS_OFF = 1
-	const TLS_ON = 2 
-
-	requires := func(check int) (bool) {
-		switch {
-			case check == AUTHENTICATED && authenticated_user == "":
-				response("530 NOT ALLOWED"); return false
-			case check == TLS_OFF && client.tls_on:
-				response("530 NOT ALLOWED, TLS is already enabled"); return false
-			case check == TLS_ON && !client.tls_on && GSMTP_TLS != "optional":
-				response("530 NOT ALLOWED, must STARTTLS"); return false
+	/*
+	 * check requirements
+	 */
+	AUTHENTICATED := func()(bool) {
+		if(authenticated_user == "") {
+			response("530 NOT ALLOWED"); return false
 		}
-		
 		return true
+	}
+	TLS_OFF := func()(bool) {
+		if(client.tls_on) {
+			response("530 NOT ALLOWED, TLS is already enabled"); return false
+		}
+		return true
+	}
+	TLS_ON := func()(bool) {
+		if(!client.tls_on && GSMTP_TLS != "optional") {
+			response("530 NOT ALLOWED, must STARTTLS"); return false
+		}
+		return true
+	}
+	when := func(check func()(bool), impl func(string)) (func(string)) {
+		return func(arg string) {
+			if(check()) {
+				impl(arg)
+			}
+		}
 	}
 
 	client_errors := 0		// number of errors in this connection
@@ -349,11 +361,7 @@ func handleClient(client *Client) {
 	/*
 	 * upgrade to TLS
 	 */
-	COMMANDS["STARTTLS"] = func(arg string) {
-		if ! requires(TLS_OFF) {
-			return
-		}
-
+	COMMANDS["STARTTLS"] = when(TLS_OFF, func(arg string) {
 		response("220 Ready to start TLS")
 
 		tlsConn := tls.Server(client.conn, TlsConfig())
@@ -363,7 +371,7 @@ func handleClient(client *Client) {
 		client.bufin = bufio.NewReader(client.conn)
 		client.bufout = bufio.NewWriter(client.conn)
 		client.tls_on = true
-	}
+	})
 
 	/*
 	 * authentication 
@@ -379,21 +387,14 @@ func handleClient(client *Client) {
 		}
 	}
 
-	COMMANDS["AUTH PLAIN "] = func(arg string) { // note space at end!
-		if ! requires(TLS_ON) {
-			return
-		}
-
+	// note space at end!
+	COMMANDS["AUTH PLAIN "] = when(TLS_ON, func(arg string) {
 		parts := strings.SplitN(FromBase64(arg), "\x00", 3)
 		username, password := parts[1], parts[2]
 		authenticate("PLAIN", username, password)
-	}
+	})
 
-	COMMANDS["AUTH LOGIN"] = func(arg string) {
-		if ! requires(TLS_ON) {
-			return
-		}
-
+	COMMANDS["AUTH LOGIN"] = when(TLS_ON, func(arg string) {
 		readAndDecodeBase64 := func() (string) {
 			input := readUntil("\r\n")
 			trimmed := strings.Trim(input, " \n\r")
@@ -406,24 +407,20 @@ func handleClient(client *Client) {
 		response("334 UGFzc3dvcmQ6")
 		password := readAndDecodeBase64()
 		authenticate("LOGIN", username, password)
-	}
+	})
 
 	/*
 	 * email control
 	 */ 
-	COMMANDS["MAIL FROM:"] = func(arg string) {
+	COMMANDS["MAIL FROM:"] = when(AUTHENTICATED, func(arg string) {
 		response("250 Ok")
-	}
+	})
 
-	COMMANDS["RCPT TO:"] = func(arg string) {
+	COMMANDS["RCPT TO:"] = when(AUTHENTICATED, func(arg string) {
 		response("250 Accepted")
-	}
+	})
 
-	COMMANDS["DATA"] = func(arg string) {
-		if ! requires(AUTHENTICATED) {
-			return
-		}
-
+	COMMANDS["DATA"] = when(AUTHENTICATED, func(arg string) {
 		response("354 Enter message, ending with \".\" on a line by itself")
 
 		// [todo] add timeout handling, limit input size
@@ -438,7 +435,7 @@ func handleClient(client *Client) {
 			CLog(fail, fmt.Sprintf("processing %d byte: %s/%s", len(data), err, message))
 			response("554 Error: " + message)
 		}
-	}
+	})
 
 	lookupSmtpCommand := func(input string) (func(string), string) {
 		upcase := strings.ToUpper(input)
