@@ -19,7 +19,7 @@ it_processes_ok() {
   tools/wait_port 2525 1
 
   ! $swaks
-  $swaks --tls --tls-protocol no_sslv2,no_sslv3
+  $swaks --tls --tls-protocol no_sslv2
   ! $swaks --tls --tls-protocol sslv2
   ! $swaks --tls --tls-protocol sslv3
 }
@@ -37,7 +37,7 @@ it_processes_tls_optional() {
   tools/wait_port 2525 1
 
   $swaks
-  $swaks --tls --tls-protocol no_sslv2,no_sslv3
+  $swaks --tls --tls-protocol no_sslv2
 }
 
 it_processes_ssl() {
@@ -51,5 +51,5 @@ it_processes_ssl() {
 
   tools/wait_port 2525 1
 
-  $swaks --tlsc --tls-protocol no_sslv2,no_sslv3
+  $swaks --tlsc --tls-protocol no_sslv2
 }

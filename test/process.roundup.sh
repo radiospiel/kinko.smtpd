@@ -3,7 +3,7 @@ describe "tests email processing"
 
 . testhelper.inc
 
-swaks="swaks --server localhost --port 2525 --tls --tls-protocol no_sslv2,no_sslv3"
+swaks="swaks --server localhost --port 2525 --tls --tls-protocol no_sslv2"
 
 it_processes_ok() {
   start_ssmtpd \
