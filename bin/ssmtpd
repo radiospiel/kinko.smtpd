@@ -180,15 +180,24 @@ func main() {
 }
 
 func handleClient(client *Client) {
+	starts_at := time.Now()
+
 	var helo string					// helo as sent from client
 	var authenticated_user string	// username after successful authentication
 	var mail_from string			// FROM via SMTP protocol
 	var rcpt_to string				// RCPT via SMTP protocol
 
+	reset := func() {
+		mail_from = ""
+		rcpt_to = ""
+	}
+
 	remote_addr, _, _ := net.SplitHostPort(client.conn.RemoteAddr().String())
 
 	// client logging
 	CLog := func(level int, msg string) {
+		duration := time.Now().Sub(starts_at)
+		msg = fmt.Sprintf("%s (+%d msecs)", msg, (int)(duration / time.Millisecond))
 		if mail_from != "" && rcpt_to != "" {
 			msg = fmt.Sprintf("%s -> %s: %s", mail_from, rcpt_to, msg)
 		}
@@ -206,6 +215,8 @@ func handleClient(client *Client) {
 	CLog(info, fmt.Sprintf("Connected from %s", remote_addr))
 
 	defer func() {
+		reset()
+		CLog(warn, fmt.Sprintf("Disconnecting"))
 		client.conn.Close()
 		<-gstmp_sem // Done; enable next client to run.
 	}()
@@ -316,8 +327,7 @@ func handleClient(client *Client) {
 	}
 
 	COMMANDS["RSET"] = func(arg string) {
-		mail_from = ""
-		rcpt_to = ""
+		reset()
 		response("250 OK")
 	}
 
