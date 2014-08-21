@@ -382,27 +382,30 @@ func handleClient(client *Client) {
 
 	response(fmt.Sprintf("220 %s SMTP kinko.smtpd"))
 
-	/* 
-	 * process the SMTP command \a cmd with remaining data \a remainder.
-	 *
-	 * returns true if this command completes the SMTP session.
-	 */
-	processSmtpCommand := func(cmd string, remainder string) (done bool){
+	done := false
+	
+	lookupSmtpCommand := func(cmd string) (func(string)) {
 		switch cmd {
 			/*
 			 * general commands
 			 */
 			default:
+				return func(remainder string) {
 				client_errors++
-				if client_errors > 3 {
+				 client_errors > 3 {
 					response("500 Too many unrecognized commands")
-					return true
+					done = true
+					return
 				}
 				response("500 unrecognized command")
+				}
 			case HELO:
+				return func(remainder string) {
 				helo = remainder
 				response("250 "+ GSMTP_HOST_NAME +" Hello ")
+			}
 			case EHLO:
+				return func(remainder string) {
 				helo = remainder
 
 				msg := "250-"+ GSMTP_HOST_NAME +" Hello "+helo+"["+remote_addr+"]"+"\r\n"
@@ -413,22 +416,34 @@ func handleClient(client *Client) {
 				msg += "250-AUTH PLAIN LOGIN\r\n"
 				msg += "250 HELP "
 				response(msg)
+			}
 			case NOOP:
+				return func(remainder string) {
+
 				response("250 OK")
+			}
 			case RSET:
+				return func(remainder string) {
+
 				mail_from = ""
 				rcpt_to = ""
 				response("250 OK")
+			}
 			case QUIT:
-				response("221 Bye")
-				return true
+				return func(remainder string) {
 
+				response("221 Bye")
+				done = true
+				return
+			}
 			/*
 			 * upgrade to TLS
 			 */
 			case STARTTLS:
+				return func(remainder string) {
+
 				if ! requires(tls_off) {
-					break
+					return
 				}
 				response("220 Ready to start TLS")
 
@@ -441,20 +456,25 @@ func handleClient(client *Client) {
 				client.bufin = bufio.NewReader(client.conn)
 				client.bufout = bufio.NewWriter(client.conn)
 				client.tls_on = true
-			
+			}
 			/*
 			 * authentication 
 			 */
 			case AUTH_PLAIN:
+				return func(remainder string) {
+				
 				if ! requires(tls_on) {
-					break
+					return
 				}
 
 				username, password := parseAuthPlain(remainder)
 				authenticate("PLAIN", username, password)
+			}
 			case AUTH_LOGIN:
+				return func(remainder string) {
+				
 				if ! requires(tls_on) {
-					break
+					return
 				}
 
 				response("334 VXNlcm5hbWU6")
@@ -464,32 +484,39 @@ func handleClient(client *Client) {
 				password := readAndDecodeBase64()
 
 				authenticate("LOGIN", username, password)
-
+			}
 			/*
 			 * email control
 			 */ 
 			case MAIL_FROM:
+				return func(remainder string) {
+				
 				if ! requires(tls_on, authenticated) {
-					break
+					return
 				}
 
 				mail_from = remainder
 				response("250 Ok")
+			}
 			case RCPT_TO:
+				return func(remainder string) {
+				
 				if ! requires(tls_on, authenticated) {
-					break
+					return
 				}
 
 				// [todo] allow multiple recipients
 				rcpt_to = remainder
 				response("250 Accepted")
-
+			}
 			/*
 			 * email data
 			 */
 			case DATA:
+				return func(remainder string) {
+				
 				if ! requires(tls_on, authenticated) {
-					break
+					return
 				}
 
 				response("354 Enter message, ending with \".\" on a line by itself")
@@ -497,18 +524,27 @@ func handleClient(client *Client) {
 				// [todo] add timeout handling.
 				data := readUntil("\r\n.\r\n")
 				processMail(data)
-		}
-		
-		return false
+			}
+			}
 	}
-	
+		
+
+	/* 
+	 * process the SMTP command \a cmd with remaining data \a remainder.
+	 *
+	 * returns true if this command completes the SMTP session.
+	 */
+
 	/* up to 99 commands in a single session. */
 	for i := 0; i < 99; i++ {
 		input := readUntil("\r\n")
 		input = strings.Trim(input, " \n\r")
 			
 		cmd, remainder := parseSmtpCommand(input)
-		if processSmtpCommand(cmd, remainder) {
+		cmdfunc := lookupSmtpCommand(cmd)
+		cmdfunc(remainder)
+		
+		if done {
 			break;
 		}
 	}
