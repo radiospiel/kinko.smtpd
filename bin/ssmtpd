@@ -379,25 +379,17 @@ func handleClient(client *Client) {
 		return true
 	}
 
-	const state_control = 1
-	const state_data = 2 
-	var STATE int 
-	BEGIN := func(state int) { STATE = state }
-	BEGIN(state_control)	// connection state
-
 	client_errors := 0				// number of errors in this connection
 
 	response(fmt.Sprintf("220 %s SMTP kinko.smtpd"))
 
 	/* up to 99 commands in a single session. */
 	for i := 0; i < 99; i++ {
-		switch STATE {
-		case state_control:
-			input := readUntil("\r\n")
-			input = strings.Trim(input, " \n\r")
+		input := readUntil("\r\n")
+		input = strings.Trim(input, " \n\r")
 			
-			cmd, remainder := parseSmtpCommand(input)
-			switch cmd {
+		cmd, remainder := parseSmtpCommand(input)
+		switch cmd {
 
 			/*
 			 * general commands
@@ -422,7 +414,6 @@ func handleClient(client *Client) {
 				}
 				msg += "250-AUTH PLAIN LOGIN\r\n"
 				msg += "250 HELP "
-
 				response(msg)
 			case NOOP:
 				response("250 OK")
@@ -430,7 +421,6 @@ func handleClient(client *Client) {
 				mail_from = ""
 				rcpt_to = ""
 				response("250 OK")
-
 			case QUIT:
 				response("221 Bye")
 				return
@@ -442,7 +432,6 @@ func handleClient(client *Client) {
 				if ! requires(tls_off) {
 					break
 				}
-
 				response("220 Ready to start TLS")
 
 				// upgrade to TLS
@@ -509,13 +498,10 @@ func handleClient(client *Client) {
 				}
 
 				response("354 Enter message, ending with \".\" on a line by itself")
-				BEGIN(state_data)
-			}
-		case state_data:
-			// [todo] add timeout handling.
-			data := readUntil("\r\n.\r\n")
-			processMail(data)
-			BEGIN(state_control)
+
+				// [todo] add timeout handling.
+				data := readUntil("\r\n.\r\n")
+				processMail(data)
 		}
 	}
 }
