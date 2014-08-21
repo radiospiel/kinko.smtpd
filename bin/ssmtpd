@@ -179,41 +179,6 @@ func main() {
 	}
 }
 
-/*
- * parse SMTP commands.
- */
-
-const HELO			= "HELO"
-const EHLO			= "EHLO"
-const NOOP			= "NOOP"
-const RSET			= "RSET"
-const AUTH_PLAIN	= "AUTH PLAIN " // note space at end!
-const AUTH_LOGIN	= "AUTH LOGIN"
-const MAIL_FROM		= "MAIL FROM:"
-const RCPT_TO		= "RCPT TO:"
-const DATA			= "DATA"
-const STARTTLS		= "STARTTLS"
-const QUIT			= "QUIT"
-
-func parseSmtpCommand(input string) (cmd string, remainder string) {
-	upcase := strings.ToUpper(input)
-
-	commands := []string{
-		HELO, EHLO, NOOP, RSET, STARTTLS, QUIT,
-		AUTH_PLAIN, AUTH_LOGIN,
-		MAIL_FROM, RCPT_TO,
-		DATA}
-
-	for _, cmd := range commands {
-		if strings.Index(upcase, cmd) == 0 {
-			remainder = input[len(cmd):]
-			return cmd, remainder
-		}
-	}
-
-	return "", ""
-}
-
 func handleClient(client *Client) {
 	var helo string					// helo as sent from client
 	var authenticated_user string	// username after successful authentication
@@ -225,7 +190,7 @@ func handleClient(client *Client) {
 	// client logging
 	CLog := func(level int, msg string) {
 		if mail_from != "" && rcpt_to != "" {
-			msg = fmt.Sprintf("%s -> %s: %s", strings.Trim(mail_from, "<>"), strings.Trim(rcpt_to, "<>"), msg)
+			msg = fmt.Sprintf("%s -> %s: %s", mail_from, rcpt_to, msg)
 		}
 		if level == fail {
 			msg = fmt.Sprintf("FAIL: %s", msg)
@@ -298,20 +263,91 @@ func handleClient(client *Client) {
 		return input
 	}
 
-	readAndDecodeBase64 := func() (string) {
-		input := readUntil("\r\n")
-		trimmed := strings.Trim(input, " \n\r")
-		return fromBase64(trimmed)
+	const AUTHENTICATED = 0
+	const TLS_OFF = 1
+	const TLS_ON = 2 
+
+	requires := func(check int) (bool) {
+		switch {
+			case check == AUTHENTICATED && authenticated_user == "":
+				response("530 NOT ALLOWED"); return false
+			case check == TLS_OFF && client.tls_on:
+				response("530 NOT ALLOWED, TLS is already enabled"); return false
+			case check == TLS_ON && !client.tls_on && !GSMTP_TLS_OPTIONAL:
+				response("530 NOT ALLOWED, must STARTTLS"); return false
+		}
+		
+		return true
 	}
 
-	parseAuthPlain := func(auth_plain string) (username string, password string) {
-		auth_plain = fromBase64(auth_plain)
-		parts := strings.SplitN(auth_plain, "\x00", 3)
-		return parts[1], parts[2]
+	client_errors := 0		// number of errors in this connection
+	done := false			// set to true to close session.
+	
+	goodbye := func(msg string) {
+		response(msg)
+		done = true
 	}
 
+	/*
+	 * parse SMTP COMMANDS.
+	 */
+
+	COMMANDS := make(map[string](func(string)))
+	COMMANDS["HELO"] = func(arg string) {
+		helo = arg
+		response("250 "+ GSMTP_HOST_NAME +" Hello ")
+	}
+
+	COMMANDS["EHLO"] = func(arg string) {
+		helo = arg
+
+		msg := "250-"+ GSMTP_HOST_NAME +" Hello "+helo+"["+remote_addr+"]"+"\r\n"
+		msg += "250-SIZE "+ strconv.Itoa(GSMTP_MAX_SIZE) +"\r\n"
+		if ! client.tls_on {
+			msg += "250-STARTTLS\r\n"
+		}
+		msg += "250-AUTH PLAIN LOGIN\r\n"
+		msg += "250 HELP "
+		response(msg)
+	}
+
+	COMMANDS["NOOP"] = func(arg string) {
+		response("250 OK")
+	}
+
+	COMMANDS["RSET"] = func(arg string) {
+		mail_from = ""
+		rcpt_to = ""
+		response("250 OK")
+	}
+
+	COMMANDS["QUIT"] = func(arg string) {
+		goodbye("221 Bye")
+	}
+
+	/*
+	 * upgrade to TLS
+	 */
+	COMMANDS["STARTTLS"] = func(arg string) {
+		if ! requires(TLS_OFF) {
+			return
+		}
+		response("220 Ready to start TLS")
+
+		tlsConn := tls.Server(client.conn, gstmp_tls_config)
+		CheckError(tlsConn.Handshake())
+
+		client.conn = net.Conn(tlsConn)
+		client.bufin = bufio.NewReader(client.conn)
+		client.bufout = bufio.NewWriter(client.conn)
+		client.tls_on = true
+	}
+
+	/*
+	 * authentication 
+	 */
 	authenticate := func(mode string, username string, password string) {
-		if authenticateUser(username, password) {
+		if AuthenticateUser(username, password) {
 			authenticated_user = username
 			CLog(warn, fmt.Sprintf("%s: authenticated from %s", mode, remote_addr))
 			response("235 ok, go ahead")
@@ -321,35 +357,69 @@ func handleClient(client *Client) {
 		}
 	}
 
-	// [todo] add timeout handling.
-	processMail := func(data string) {
-		CLog(info, fmt.Sprintf("sent %d byte for %s from %s)", len(data)))
-		//
-		var err error
-		var message string
-
-		if(GSTMP_PROCESS == "") {
-			message = fmt.Sprintf("received %d byte", len(data))
-		} else {
-			cmd := exec.Command(GSTMP_PROCESS, authenticated_user)
-			cmd.Stdin = strings.NewReader(data)
-			cmd.Stderr = os.Stderr
-
-			var out bytes.Buffer
-			cmd.Stdout = &out
-			err = cmd.Run()
-			message = firstLine(out)
-			
-			if message == "" {
-				switch {
-					case err != nil:
-						message = "Unknown error"
-					default:
-						message = "Success"
-				}
-			}
+	COMMANDS["AUTH PLAIN "] = func(arg string) { // note space at end!
+		if ! requires(TLS_ON) {
+			return
 		}
 
+		parts := strings.SplitN(fromBase64(arg), "\x00", 3)
+		username, password := parts[1], parts[2]
+		authenticate("PLAIN", username, password)
+	}
+
+	COMMANDS["AUTH LOGIN"] = func(arg string) {
+		if ! requires(TLS_ON) {
+			return
+		}
+
+		readAndDecodeBase64 := func() (string) {
+			input := readUntil("\r\n")
+			trimmed := strings.Trim(input, " \n\r")
+			return fromBase64(trimmed)
+		}
+
+		response("334 VXNlcm5hbWU6")
+		username := readAndDecodeBase64()
+
+		response("334 UGFzc3dvcmQ6")
+		password := readAndDecodeBase64()
+		authenticate("LOGIN", username, password)
+	}
+
+	/*
+	 * email control
+	 */ 
+	COMMANDS["MAIL FROM:"] = func(arg string) {
+		if ! requires(AUTHENTICATED) {
+			return
+		}
+
+		mail_from = strings.Trim(arg, "<>")
+		response("250 Ok")
+	}
+
+	COMMANDS["RCPT TO:"] = func(arg string) {
+		if ! requires(AUTHENTICATED) {
+			return
+		}
+
+		// [todo] allow multiple recipients
+		rcpt_to = strings.Trim(arg, "<>")
+		response("250 Accepted")
+	}
+
+	COMMANDS["DATA"] = func(arg string) {
+		if ! requires(AUTHENTICATED) {
+			return
+		}
+
+		response("354 Enter message, ending with \".\" on a line by itself")
+
+		// [todo] add timeout handling, limit input size
+		data := readUntil("\r\n.\r\n")
+		CLog(info, fmt.Sprintf("sent %d byte for %s from %s)", len(data)))
+
+		message, err := ProcessMail(data, authenticated_user)
 		if err == nil {
 			CLog(warn, fmt.Sprintf("processed %d byte: %s", len(data), message))
 			response("250 OK: " + message)
@@ -359,190 +429,39 @@ func handleClient(client *Client) {
 		}
 	}
 
-	const authenticated = 0
-	const tls_off = 1
-	const tls_on = 2 
-
-	requires := func(args ...int) (bool) {
-		for _, check := range args {
-			switch {
-				case check == authenticated && authenticated_user == "":
-					response("530 NOT ALLOWED"); return false
-				case check == tls_off && client.tls_on:
-					response("530 NOT ALLOWED, TLS is already enabled"); return false
-				case check == tls_on && !client.tls_on && !GSMTP_TLS_OPTIONAL:
-					response("530 NOT ALLOWED, must STARTTLS"); return false
+	lookupSmtpCommand := func(input string) (func(string), string) {
+		upcase := strings.ToUpper(input)
+		for cmd, handler := range COMMANDS {
+			if strings.Index(upcase, cmd) == 0 {
+				arg := input[len(cmd):]
+				return handler, arg
 			}
 		}
 
-		return true
+		unrecognized := func(arg string) {
+			client_errors++
+			if client_errors > 3 {
+				goodbye("500 Too many unrecognized COMMANDS")
+			} else {
+				response("500 unrecognized command")
+			}
+		}
+
+		return unrecognized, ""
 	}
-
-	client_errors := 0				// number of errors in this connection
-
+	
+	/*
+	 * start SMTP session.
+	 */
 	response(fmt.Sprintf("220 %s SMTP kinko.smtpd"))
 
-	done := false
-	
-	lookupSmtpCommand := func(cmd string) (func(string)) {
-		switch cmd {
-			/*
-			 * general commands
-			 */
-			default:
-				return func(remainder string) {
-				client_errors++
-				 client_errors > 3 {
-					response("500 Too many unrecognized commands")
-					done = true
-					return
-				}
-				response("500 unrecognized command")
-				}
-			case HELO:
-				return func(remainder string) {
-				helo = remainder
-				response("250 "+ GSMTP_HOST_NAME +" Hello ")
-			}
-			case EHLO:
-				return func(remainder string) {
-				helo = remainder
-
-				msg := "250-"+ GSMTP_HOST_NAME +" Hello "+helo+"["+remote_addr+"]"+"\r\n"
-				msg += "250-SIZE "+ strconv.Itoa(GSMTP_MAX_SIZE) +"\r\n"
-				if ! client.tls_on {
-					msg += "250-STARTTLS\r\n"
-				}
-				msg += "250-AUTH PLAIN LOGIN\r\n"
-				msg += "250 HELP "
-				response(msg)
-			}
-			case NOOP:
-				return func(remainder string) {
-
-				response("250 OK")
-			}
-			case RSET:
-				return func(remainder string) {
-
-				mail_from = ""
-				rcpt_to = ""
-				response("250 OK")
-			}
-			case QUIT:
-				return func(remainder string) {
-
-				response("221 Bye")
-				done = true
-				return
-			}
-			/*
-			 * upgrade to TLS
-			 */
-			case STARTTLS:
-				return func(remainder string) {
-
-				if ! requires(tls_off) {
-					return
-				}
-				response("220 Ready to start TLS")
-
-				// upgrade to TLS
-				tlsConn := tls.Server(client.conn, gstmp_tls_config)
-				err := tlsConn.Handshake()
-				CheckError(err)
-
-				client.conn = net.Conn(tlsConn)
-				client.bufin = bufio.NewReader(client.conn)
-				client.bufout = bufio.NewWriter(client.conn)
-				client.tls_on = true
-			}
-			/*
-			 * authentication 
-			 */
-			case AUTH_PLAIN:
-				return func(remainder string) {
-				
-				if ! requires(tls_on) {
-					return
-				}
-
-				username, password := parseAuthPlain(remainder)
-				authenticate("PLAIN", username, password)
-			}
-			case AUTH_LOGIN:
-				return func(remainder string) {
-				
-				if ! requires(tls_on) {
-					return
-				}
-
-				response("334 VXNlcm5hbWU6")
-				username := readAndDecodeBase64()
-
-				response("334 UGFzc3dvcmQ6")
-				password := readAndDecodeBase64()
-
-				authenticate("LOGIN", username, password)
-			}
-			/*
-			 * email control
-			 */ 
-			case MAIL_FROM:
-				return func(remainder string) {
-				
-				if ! requires(tls_on, authenticated) {
-					return
-				}
-
-				mail_from = remainder
-				response("250 Ok")
-			}
-			case RCPT_TO:
-				return func(remainder string) {
-				
-				if ! requires(tls_on, authenticated) {
-					return
-				}
-
-				// [todo] allow multiple recipients
-				rcpt_to = remainder
-				response("250 Accepted")
-			}
-			/*
-			 * email data
-			 */
-			case DATA:
-				return func(remainder string) {
-				
-				if ! requires(tls_on, authenticated) {
-					return
-				}
-
-				response("354 Enter message, ending with \".\" on a line by itself")
-
-				// [todo] add timeout handling.
-				data := readUntil("\r\n.\r\n")
-				processMail(data)
-			}
-			}
-	}
-		
-
-	/* 
-	 * process the SMTP command \a cmd with remaining data \a remainder.
-	 *
-	 * returns true if this command completes the SMTP session.
-	 */
-
-	/* up to 99 commands in a single session. */
+	/* up to 99 COMMANDS in a single session. */
 	for i := 0; i < 99; i++ {
 		input := readUntil("\r\n")
 		input = strings.Trim(input, " \n\r")
-			
-		cmd, remainder := parseSmtpCommand(input)
-		cmdfunc := lookupSmtpCommand(cmd)
-		cmdfunc(remainder)
+
+		cmd, arg := lookupSmtpCommand(input)
+		cmd(arg)
 		
 		if done {
 			break;
@@ -550,7 +469,7 @@ func handleClient(client *Client) {
 	}
 }
 
-func authenticateUser(username string, password string) bool {
+func AuthenticateUser(username string, password string) bool {
 	cmd := exec.Command(GSTMP_AUTHENTICATE)
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
@@ -583,3 +502,24 @@ func fromBase64(data string) string {
 	return string(res)
 }
 
+// [todo] add timeout handling.
+func ProcessMail(data string, authenticated_user string)(string, error) {
+	if(GSTMP_PROCESS == "") {
+		return fmt.Sprintf("received %d byte", len(data)), nil
+	}
+
+	cmd := exec.Command(GSTMP_PROCESS, authenticated_user)
+	cmd.Stdin = strings.NewReader(data)
+	cmd.Stderr = os.Stderr
+
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	err := cmd.Run()
+	message := firstLine(out)
+
+	switch {
+		case message != "": 	return message, err
+		case err != nil: 		return "Unknown error", err
+		default: 				return "Success", err
+	}
+}
