@@ -515,8 +515,17 @@ func ProcessMail(data string, authenticated_user string)(string, error) {
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err := cmd.Run()
-	message := FirstLine(out)
+	
+	// cmd.Run might return an error even if the process finished successfully,
+	// for example when running a process command which succeeds before reading
+	// the entire email. This is supported, and we use that case in our tests.
+	// (whether or not that makes sense is a different matter.)
+	if err != nil && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+		Log(warn, fmt.Sprintf("%s: ignoring error %v", GSTMP_PROCESS, err))
+		err = nil
+	}
 
+	message := FirstLine(out)
 	switch {
 		case message != "": 	return message, err
 		case err != nil: 		return "Unknown error", err
