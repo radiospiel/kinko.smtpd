@@ -55,7 +55,6 @@ import (
 	"io/ioutil"
 	"os/exec"
 	"log"
-	"math/rand"
 	"net"
 	"os"
 	"runtime"
@@ -94,8 +93,8 @@ type Client struct {
 	username	string			// username after successful authentication
 	mail_from	string			// FROM via SMTP protocol
 	rcpt_to		string			// RCPT via SMTP protocol
-	remote_addr	string			// client address
 	data		string			// mail data
+	log			func(int, string) 	// log info
 	conn		net.Conn
 	bufin		*bufio.Reader
 	bufout		*bufio.Writer
@@ -103,17 +102,16 @@ type Client struct {
 	processStatus chan bool
 }
 
-func fatal(s string) {
-	log.Fatalf(s)
-}
+const fatal = 0
+const fail = 1
+const warn = 2
+const info = 3 
 
-func warn(s string) {
-	log.Println(s)
-}
-
-func info(s string) {
-	if GSMTP_VERBOSE {
-		log.Println(s)
+func Log(level int, s string) {
+	switch level {
+		case fatal: 		log.Fatalf(s);
+		case fail, warn:	log.Println(s);
+		default: 			if GSMTP_VERBOSE { log.Println(s); }
 	}
 }
 
@@ -143,7 +141,7 @@ func parseArguments() {
 	gstmp_timeout = time.Duration(GSMTP_TIMEOUT) * time.Second
 
 	if GSMTP_PUB_KEY == "" || GSMTP_PRV_KEY == "" {
-		fatal("Missing -ssl-key or -ssl-cert arguments")
+		Log(fatal, "Missing -ssl-key or -ssl-cert arguments")
 	}
 }
 
@@ -152,7 +150,7 @@ func main() {
 
 	cert, err := tls.LoadX509KeyPair(GSMTP_PUB_KEY, GSMTP_PRV_KEY)
 	if err != nil {
-		fatal(fmt.Sprintf("There was a problem with loading the certificate: %s", err))
+		Log(fatal, fmt.Sprintf("There was a problem with loading the certificate: %s", err))
 	}
 	gstmp_tls_config = &tls.Config{Certificates: []tls.Certificate{cert}, 
 								ClientAuth: tls.VerifyClientCertIfGiven, 
@@ -165,23 +163,22 @@ func main() {
 	// Start listening for SMTP connections
 	listener, err := net.Listen("tcp", gstmp_listen_interface)
 	if err != nil {
-		fatal(fmt.Sprintf("Cannot listen on port, %v", err))
+		Log(fatal, fmt.Sprintf("Cannot listen on port, %v", err))
 	} else {
-		warn(fmt.Sprintf("Listening on tcp %s",	 gstmp_listen_interface))
+		Log(warn, fmt.Sprintf("Listening on tcp %s", gstmp_listen_interface))
 	}
 
 	var clientId int64 = 1
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			warn(fmt.Sprintf("Accept error: %s", err))
+			Log(warn, fmt.Sprintf("Accept error: %s", err))
 			continue
 		}
-		warn("Currently " +strconv.Itoa(runtime.NumGoroutine())+ " serving goroutines")
+		Log(info, "Currently " +strconv.Itoa(runtime.NumGoroutine())+ " serving goroutines")
 		gstmp_sem <- 1 // Wait for active queue to drain.
 		go handleClient(&Client{
 			conn:			conn,
-			remote_addr:	conn.RemoteAddr().String(),
 			bufin:		 	bufio.NewReader(conn),
 			bufout:		 	bufio.NewWriter(conn),
 			clientId:	 	clientId,
@@ -227,6 +224,29 @@ func parseSmtpCommand(input string) (cmd string, remainder string) {
 }
 
 func handleClient(client *Client) {
+	remote_addr, _, _ := net.SplitHostPort(client.conn.RemoteAddr().String())
+
+	// client logging
+	client.log = func(level int, msg string) {
+		if client.mail_from != "" && client.rcpt_to != "" {
+			mail_from := strings.Trim(client.mail_from, "<>")
+			rcpt_to := strings.Trim(client.rcpt_to, "<>")
+
+			msg = fmt.Sprintf("%s -> %s: %s", mail_from, rcpt_to, msg)
+		}
+		if level == fail {
+			msg = fmt.Sprintf("FAIL: %s", msg)
+		}
+		if client.username == "" {
+			msg = fmt.Sprintf("#%d: %s", client.clientId, msg)
+		} else {
+			msg = fmt.Sprintf("#%d (%s): %s", client.clientId, client.username, msg)
+		}
+		Log(level, msg)
+	}
+	
+	client.log(info, fmt.Sprintf("Connected from %s", remote_addr))
+
 	defer func() {
 		client.conn.Close()
 		<-gstmp_sem // Done; enable next client to run.
@@ -238,13 +258,13 @@ func handleClient(client *Client) {
 		case err == nil:
 			;
 		case err == io.EOF:
-			warn(fmt.Sprintf("Client closed connection: %v", err))
+			client.log(warn, fmt.Sprintf("Client closed connection: %v", err))
 		default:
 			neterr, ok := err.(net.Error);
 			if ok && neterr.Timeout() {
-				warn(fmt.Sprintf("Client timed out: %v", err))
+				client.log(warn, fmt.Sprintf("Client timed out: %v", err))
 			} else {
-				warn(fmt.Sprintf("Client IO error: %v", err))
+				client.log(warn, fmt.Sprintf("Client IO error: %v", err))
 			}
 		}
 	}()
@@ -265,10 +285,9 @@ func handleClient(client *Client) {
 		}
 	}
 
-
 	/*
 	 * [todo] readUntil only works if suffix ends in '\n'
-	 * [todo] limmit length of string to be read during ReadString
+	 * [todo] limit length of string to be read during ReadString
 	 */
 	readUntil := func(suffix string) (string) {
 		input := ""
@@ -295,6 +314,23 @@ func handleClient(client *Client) {
 		input := readUntil("\r\n")
 		trimmed := strings.Trim(input, " \n\r")
 		return fromBase64(trimmed)
+	}
+
+	parseAuthPlain := func(auth_plain string) (username string, password string) {
+		auth_plain = fromBase64(auth_plain)
+		parts := strings.SplitN(auth_plain, "\x00", 3)
+		return parts[1], parts[2]
+	}
+
+	authenticate := func(mode string, username string, password string) {
+		if authenticateUser(username, password) {
+			client.username = username
+			client.log(warn, fmt.Sprintf("%s: authenticated from %s", mode, remote_addr))
+			response("235 ok, go ahead")
+		} else {
+			client.log(fail, fmt.Sprintf("%s: %s failed for %s from %s", mode, GSTMP_AUTHENTICATE, username, remote_addr))
+			response("530 NOT ALLOWED")
+		}
 	}
 
 	const authenticated = 0
@@ -326,7 +362,6 @@ func handleClient(client *Client) {
 
 	response(fmt.Sprintf("220 %s SMTP kinko.smtpd"))
 
-
 	/* up to 99 commands in a single session. */
 	for i := 0; i < 99; i++ {
 		switch STATE {
@@ -353,7 +388,7 @@ func handleClient(client *Client) {
 			case EHLO:
 				client.helo = remainder
 
-				msg := "250-"+ GSMTP_HOST_NAME +" Hello "+client.helo+"["+client.remote_addr+"]"+"\r\n"
+				msg := "250-"+ GSMTP_HOST_NAME +" Hello "+client.helo+"["+remote_addr+"]"+"\r\n"
 				msg += "250-SIZE "+ strconv.Itoa(GSMTP_MAX_SIZE) +"\r\n"
 				if ! client.tls_on {
 					msg += "250-STARTTLS\r\n"
@@ -404,13 +439,8 @@ func handleClient(client *Client) {
 					break
 				}
 
-				_, username, password := parseAuthPlain(remainder)
-				if authenticateUser(username, password) {
-					client.username = username
-					response("235 ok, go ahead")
-				} else {
-					response("530 NOT ALLOWED")
-				}
+				username, password := parseAuthPlain(remainder)
+				authenticate("PLAIN", username, password)
 			case AUTH_LOGIN:
 				if ! requires(tls_on) {
 					break
@@ -422,12 +452,7 @@ func handleClient(client *Client) {
 				response("334 UGFzc3dvcmQ6")
 				password := readAndDecodeBase64()
 
-				if authenticateUser(username, password) {
-					client.username = username
-					response("235 ok, go ahead")
-				} else {
-					response("530 NOT ALLOWED")
-				}
+				authenticate("LOGIN", username, password)
 
 			/*
 			 * email control
@@ -492,13 +517,6 @@ func authenticateUser(username string, password string) bool {
 	}()
 
 	err := cmd.Run()
-
-	if err != nil {
-		warn(fmt.Sprintf("auth via %s FAIL: %s", GSTMP_AUTHENTICATE, err))
-	} else {
-		warn(fmt.Sprintf("auth via %s OK", GSTMP_AUTHENTICATE))
-	}
-
 	return err == nil
 }
 
@@ -507,14 +525,10 @@ func processMail() {
 	for {
 		client := <-gstmp_save_mail_chan
 		
-		msg_id := rand.Int31()
-		warn(fmt.Sprintf("#%d: received %d byte from %s to %s (from %s@%s)", 
-					msg_id,
+		client.log(info, fmt.Sprintf("sent %d byte for %s from %s)", 
 					len(client.data), 
-					client.mail_from, 
 					client.rcpt_to,
-					client.username, 
-					client.remote_addr))
+					client.mail_from))
 
 		var err error
 
@@ -540,10 +554,14 @@ func processMail() {
 		}
 
 		if err != nil {
-			warn(fmt.Sprintf("#%d: Processing FAIL w/%s: %s",  msg_id, err, client.processMessage))
-			warn(fmt.Sprintf("	Filter: '%s'",	GSTMP_PROCESS))
+			client.log(fail, fmt.Sprintf("processing %d byte: %s/%s", 
+					len(client.data),
+					err, 
+					client.processMessage))
 		} else {
-			warn(fmt.Sprintf("#%d: Processed OK: %s",  msg_id, client.processMessage))
+			client.log(warn, fmt.Sprintf("processed %d byte: %s", 
+					len(client.data),
+					client.processMessage))
 		}
 
 		client.processStatus <- (err == nil)
@@ -566,8 +584,3 @@ func fromBase64(data string) string {
 	return string(res)
 }
 
-func parseAuthPlain(auth_plain string) (identity string, username string, password string) {
-	auth_plain = fromBase64(auth_plain)
-	parts := strings.SplitN(auth_plain, "\x00", 3)
-	return parts[0], parts[1], parts[2]
-}
