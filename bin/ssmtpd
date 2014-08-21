@@ -72,6 +72,7 @@ var GSTMP_AUTHENTICATE	=	 ""		 // command to authenticate
 var GSTMP_PROCESS		=	 ""		 // command to process email
 var GSMTP_PUB_KEY		=	 ""		 // TLS certificate
 var GSMTP_PRV_KEY		=	 ""		 // TLS key
+var GSMTP_VERBOSE		=	false	 // verbose operation?
 
 /*
  * internal global values
@@ -109,6 +110,12 @@ func warn(s string) {
 	log.Println(s)
 }
 
+func info(s string) {
+	if GSMTP_VERBOSE {
+		log.Println(s)
+	}
+}
+
 func parseArguments() {
 	log.SetOutput(os.Stderr)
 
@@ -122,6 +129,7 @@ func parseArguments() {
 	flag.StringVar(&GSTMP_AUTHENTICATE, "auth",			"",						"authenticate command")
 	flag.StringVar(&GSTMP_PROCESS,		"process",		"",						"process command")
 	flag.StringVar(&GSMTP_HOST_NAME,	"hostname",		"server.example.com",	"The STMP hostname")
+	flag.BoolVar(&GSMTP_VERBOSE,		"verbose",		false,					"verbose operation")
 	flag.Parse()
 
 	// -- initialize internal data
