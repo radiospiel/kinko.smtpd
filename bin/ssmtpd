@@ -111,7 +111,7 @@ func CheckError(err error) {
 	if err != nil { panic(err) }
 }
 
-func parseArguments() {
+func ParseArguments() {
 	log.SetOutput(os.Stderr)
 
 	// -- parse command line arguments ----------------------------------------
@@ -142,7 +142,7 @@ func parseArguments() {
 }
 
 func main() {
-	parseArguments()
+	ParseArguments()
 
 	cert, err := tls.LoadX509KeyPair(GSMTP_PUB_KEY, GSMTP_PRV_KEY)
 	if err != nil {
@@ -362,7 +362,7 @@ func handleClient(client *Client) {
 			return
 		}
 
-		parts := strings.SplitN(fromBase64(arg), "\x00", 3)
+		parts := strings.SplitN(FromBase64(arg), "\x00", 3)
 		username, password := parts[1], parts[2]
 		authenticate("PLAIN", username, password)
 	}
@@ -375,7 +375,7 @@ func handleClient(client *Client) {
 		readAndDecodeBase64 := func() (string) {
 			input := readUntil("\r\n")
 			trimmed := strings.Trim(input, " \n\r")
-			return fromBase64(trimmed)
+			return FromBase64(trimmed)
 		}
 
 		response("334 VXNlcm5hbWU6")
@@ -486,7 +486,7 @@ func AuthenticateUser(username string, password string) bool {
 	return err == nil
 }
 
-func firstLine(buf bytes.Buffer) string {
+func FirstLine(buf bytes.Buffer) string {
 	scanner := bufio.NewScanner(bytes.NewReader(buf.Bytes()))
 	for scanner.Scan() {
 		return scanner.Text()
@@ -495,7 +495,7 @@ func firstLine(buf bytes.Buffer) string {
 	return ""
 }
 
-func fromBase64(data string) string {
+func FromBase64(data string) string {
 	buf := bytes.NewBufferString(data)
 	decoder := base64.NewDecoder(base64.StdEncoding, buf)
 	res, _ := ioutil.ReadAll(decoder)
@@ -515,7 +515,7 @@ func ProcessMail(data string, authenticated_user string)(string, error) {
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err := cmd.Run()
-	message := firstLine(out)
+	message := FirstLine(out)
 
 	switch {
 		case message != "": 	return message, err
