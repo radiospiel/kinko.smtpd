@@ -156,10 +156,6 @@ func main() {
 								ClientAuth: tls.VerifyClientCertIfGiven, 
 								ServerName: GSMTP_HOST_NAME}
 
-	// start some processMail workers
-	for i := 0; i < 3; i++ {
-		go processMail()
-	}
 	// Start listening for SMTP connections
 	listener, err := net.Listen("tcp", gstmp_listen_interface)
 	if err != nil {
@@ -490,9 +486,8 @@ func handleClient(client *Client) {
 			//
 			// place the client on \a gstmp_save_mail_chan; one of 
 			// the processMail workers will pick it up
-			gstmp_save_mail_chan <- client
-			// wait for the save to complete
-			status := <-client.processStatus
+			status := processMail(client)
+
 			if status {
 				response("250 OK: " + client.processMessage)
 			} else {
@@ -520,11 +515,7 @@ func authenticateUser(username string, password string) bool {
 	return err == nil
 }
 
-func processMail() {
-	//	receives values from the channel repeatedly until it is closed.
-	for {
-		client := <-gstmp_save_mail_chan
-		
+func processMail(client *Client) (bool) {
 		client.log(info, fmt.Sprintf("sent %d byte for %s from %s)", 
 					len(client.data), 
 					client.rcpt_to,
@@ -564,8 +555,7 @@ func processMail() {
 					client.processMessage))
 		}
 
-		client.processStatus <- (err == nil)
-	}
+		return err == nil
 }
 
 func firstLine(buf bytes.Buffer) string {
