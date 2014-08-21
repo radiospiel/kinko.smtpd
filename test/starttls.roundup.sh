@@ -23,3 +23,19 @@ it_processes_ok() {
   ! $swaks --tls --tls-protocol sslv2
   ! $swaks --tls --tls-protocol sslv3
 }
+
+it_processes_tls_optional() {
+  start_ssmtpd \
+      --hostname ssmtpd.test.local \
+      --ssl-key $PWD/fixtures/ssmtpd.test.local.priv  \
+      --ssl-cert $PWD/fixtures/ssmtpd.test.local.pem  \
+      --auth $(which true) \
+      --tls-optional \
+      --process $PWD/fixtures/process.ok
+
+
+  tools/wait_port 2525 1
+
+  $swaks
+  $swaks --tls --tls-protocol no_sslv2,no_sslv3
+}
