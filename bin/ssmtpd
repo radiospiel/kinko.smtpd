@@ -88,18 +88,10 @@ var gstmp_save_mail_chan chan *Client	   // workers for processing mail.
 
 type Client struct {
 	clientId	int64			// id of client connection.
-	helo		string			// helo as sent from client
 	tls_on		bool			// set after switched to TLS
-	username	string			// username after successful authentication
-	mail_from	string			// FROM via SMTP protocol
-	rcpt_to		string			// RCPT via SMTP protocol
-	data		string			// mail data
-	log			func(int, string) 	// log info
 	conn		net.Conn
 	bufin		*bufio.Reader
 	bufout		*bufio.Writer
-	processMessage string		// result message of email processing
-	processStatus chan bool
 }
 
 const fatal = 0
@@ -178,7 +170,6 @@ func main() {
 			bufin:		 	bufio.NewReader(conn),
 			bufout:		 	bufio.NewWriter(conn),
 			clientId:	 	clientId,
-			processStatus:	make(chan bool),
 		})
 		clientId++
 	}
@@ -220,28 +211,30 @@ func parseSmtpCommand(input string) (cmd string, remainder string) {
 }
 
 func handleClient(client *Client) {
+	var helo string					// helo as sent from client
+	var authenticated_user string	// username after successful authentication
+	var mail_from string			// FROM via SMTP protocol
+	var rcpt_to string				// RCPT via SMTP protocol
+
 	remote_addr, _, _ := net.SplitHostPort(client.conn.RemoteAddr().String())
 
 	// client logging
-	client.log = func(level int, msg string) {
-		if client.mail_from != "" && client.rcpt_to != "" {
-			mail_from := strings.Trim(client.mail_from, "<>")
-			rcpt_to := strings.Trim(client.rcpt_to, "<>")
-
-			msg = fmt.Sprintf("%s -> %s: %s", mail_from, rcpt_to, msg)
+	CLog := func(level int, msg string) {
+		if mail_from != "" && rcpt_to != "" {
+			msg = fmt.Sprintf("%s -> %s: %s", strings.Trim(mail_from, "<>"), strings.Trim(rcpt_to, "<>"), msg)
 		}
 		if level == fail {
 			msg = fmt.Sprintf("FAIL: %s", msg)
 		}
-		if client.username == "" {
+		if authenticated_user == "" {
 			msg = fmt.Sprintf("#%d: %s", client.clientId, msg)
 		} else {
-			msg = fmt.Sprintf("#%d (%s): %s", client.clientId, client.username, msg)
+			msg = fmt.Sprintf("#%d (%s): %s", client.clientId, authenticated_user, msg)
 		}
 		Log(level, msg)
 	}
 	
-	client.log(info, fmt.Sprintf("Connected from %s", remote_addr))
+	CLog(info, fmt.Sprintf("Connected from %s", remote_addr))
 
 	defer func() {
 		client.conn.Close()
@@ -254,13 +247,13 @@ func handleClient(client *Client) {
 		case err == nil:
 			;
 		case err == io.EOF:
-			client.log(warn, fmt.Sprintf("Client closed connection: %v", err))
+			CLog(warn, fmt.Sprintf("Client closed connection: %v", err))
 		default:
 			neterr, ok := err.(net.Error);
 			if ok && neterr.Timeout() {
-				client.log(warn, fmt.Sprintf("Client timed out: %v", err))
+				CLog(warn, fmt.Sprintf("Client timed out: %v", err))
 			} else {
-				client.log(warn, fmt.Sprintf("Client IO error: %v", err))
+				CLog(warn, fmt.Sprintf("Client IO error: %v", err))
 			}
 		}
 	}()
@@ -320,12 +313,50 @@ func handleClient(client *Client) {
 
 	authenticate := func(mode string, username string, password string) {
 		if authenticateUser(username, password) {
-			client.username = username
-			client.log(warn, fmt.Sprintf("%s: authenticated from %s", mode, remote_addr))
+			authenticated_user = username
+			CLog(warn, fmt.Sprintf("%s: authenticated from %s", mode, remote_addr))
 			response("235 ok, go ahead")
 		} else {
-			client.log(fail, fmt.Sprintf("%s: %s failed for %s from %s", mode, GSTMP_AUTHENTICATE, username, remote_addr))
+			CLog(fail, fmt.Sprintf("%s: %s failed for %s from %s", mode, GSTMP_AUTHENTICATE, username, remote_addr))
 			response("530 NOT ALLOWED")
+		}
+	}
+
+	// [todo] add timeout handling.
+	processMail := func(data string) {
+		CLog(info, fmt.Sprintf("sent %d byte for %s from %s)", len(data)))
+		//
+		var err error
+		var message string
+
+		if(GSTMP_PROCESS == "") {
+			message = fmt.Sprintf("received %d byte", len(data))
+		} else {
+			cmd := exec.Command(GSTMP_PROCESS, authenticated_user)
+			cmd.Stdin = strings.NewReader(data)
+			cmd.Stderr = os.Stderr
+
+			var out bytes.Buffer
+			cmd.Stdout = &out
+			err = cmd.Run()
+			message = firstLine(out)
+			
+			if message == "" {
+				switch {
+					case err != nil:
+						message = "Unknown error"
+					default:
+						message = "Success"
+				}
+			}
+		}
+
+		if err == nil {
+			CLog(warn, fmt.Sprintf("processed %d byte: %s", len(data), message))
+			response("250 OK: " + message)
+		} else {
+			CLog(fail, fmt.Sprintf("processing %d byte: %s/%s", len(data), err, message))
+			response("554 Error: " + message)
 		}
 	}
 
@@ -336,7 +367,7 @@ func handleClient(client *Client) {
 	requires := func(args ...int) (bool) {
 		for _, check := range args {
 			switch {
-				case check == authenticated && client.username == "":
+				case check == authenticated && authenticated_user == "":
 					response("530 NOT ALLOWED"); return false
 				case check == tls_off && client.tls_on:
 					response("530 NOT ALLOWED, TLS is already enabled"); return false
@@ -379,12 +410,12 @@ func handleClient(client *Client) {
 				}
 				response("500 unrecognized command")
 			case HELO:
-				client.helo = remainder
+				helo = remainder
 				response("250 "+ GSMTP_HOST_NAME +" Hello ")
 			case EHLO:
-				client.helo = remainder
+				helo = remainder
 
-				msg := "250-"+ GSMTP_HOST_NAME +" Hello "+client.helo+"["+remote_addr+"]"+"\r\n"
+				msg := "250-"+ GSMTP_HOST_NAME +" Hello "+helo+"["+remote_addr+"]"+"\r\n"
 				msg += "250-SIZE "+ strconv.Itoa(GSMTP_MAX_SIZE) +"\r\n"
 				if ! client.tls_on {
 					msg += "250-STARTTLS\r\n"
@@ -396,8 +427,8 @@ func handleClient(client *Client) {
 			case NOOP:
 				response("250 OK")
 			case RSET:
-				client.mail_from = ""
-				client.rcpt_to = ""
+				mail_from = ""
+				rcpt_to = ""
 				response("250 OK")
 
 			case QUIT:
@@ -458,7 +489,7 @@ func handleClient(client *Client) {
 					break
 				}
 
-				client.mail_from = remainder
+				mail_from = remainder
 				response("250 Ok")
 			case RCPT_TO:
 				if ! requires(tls_on, authenticated) {
@@ -466,7 +497,7 @@ func handleClient(client *Client) {
 				}
 
 				// [todo] allow multiple recipients
-				client.rcpt_to = remainder
+				rcpt_to = remainder
 				response("250 Accepted")
 
 			/*
@@ -481,18 +512,9 @@ func handleClient(client *Client) {
 				BEGIN(state_data)
 			}
 		case state_data:
-			client.data = readUntil("\r\n.\r\n")
 			// [todo] add timeout handling.
-			//
-			// place the client on \a gstmp_save_mail_chan; one of 
-			// the processMail workers will pick it up
-			status := processMail(client)
-
-			if status {
-				response("250 OK: " + client.processMessage)
-			} else {
-				response("554 Error: " + client.processMessage)
-			}
+			data := readUntil("\r\n.\r\n")
+			processMail(data)
 			BEGIN(state_control)
 		}
 	}
@@ -513,49 +535,6 @@ func authenticateUser(username string, password string) bool {
 
 	err := cmd.Run()
 	return err == nil
-}
-
-func processMail(client *Client) (bool) {
-		client.log(info, fmt.Sprintf("sent %d byte for %s from %s)", 
-					len(client.data), 
-					client.rcpt_to,
-					client.mail_from))
-
-		var err error
-
-		if(GSTMP_PROCESS == "") {
-			client.processMessage = fmt.Sprintf("received %d byte", len(client.data))
-		} else {
-			cmd := exec.Command(GSTMP_PROCESS, client.username)
-			cmd.Stdin = strings.NewReader(client.data)
-			cmd.Stderr = os.Stderr
-
-			var out bytes.Buffer
-			cmd.Stdout = &out
-			err = cmd.Run()
-			client.processMessage = firstLine(out)
-			switch {
-				case client.processMessage != "":
-					;
-				case err != nil:
-					client.processMessage = "Unknown error"
-				default:
-					client.processMessage = "Success"
-			}
-		}
-
-		if err != nil {
-			client.log(fail, fmt.Sprintf("processing %d byte: %s/%s", 
-					len(client.data),
-					err, 
-					client.processMessage))
-		} else {
-			client.log(warn, fmt.Sprintf("processed %d byte: %s", 
-					len(client.data),
-					client.processMessage))
-		}
-
-		return err == nil
 }
 
 func firstLine(buf bytes.Buffer) string {
