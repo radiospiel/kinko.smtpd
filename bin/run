@@ -2,9 +2,7 @@
 set -eu
 set -o pipefail
 
-if [ -z "$KINKO_ROOT" ]; then
-  KINKO_ROOT=$(realpath $(dirname $0)/../../..)
-fi
+KINKO_ROOT=${KINKO_ROOT:-$(kinko root)}
 
 SSL_CERT=$KINKO_ROOT/var/public/connectivity/shared/openssl.cert
 SSL_KEY=$KINKO_ROOT/var/public/connectivity/shared/openssl.priv
