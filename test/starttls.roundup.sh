@@ -30,7 +30,7 @@ it_processes_tls_optional() {
       --ssl-key $PWD/fixtures/ssmtpd.test.local.priv  \
       --ssl-cert $PWD/fixtures/ssmtpd.test.local.pem  \
       --auth $(which true) \
-      --tls-optional \
+      --tls optional \
       --process $PWD/fixtures/process.ok
 
 
@@ -38,4 +38,18 @@ it_processes_tls_optional() {
 
   $swaks
   $swaks --tls --tls-protocol no_sslv2,no_sslv3
+}
+
+it_processes_ssl() {
+  start_ssmtpd \
+      --hostname ssmtpd.test.local \
+      --ssl-key $PWD/fixtures/ssmtpd.test.local.priv  \
+      --ssl-cert $PWD/fixtures/ssmtpd.test.local.pem  \
+      --auth $(which true) \
+      --tls ssl \
+      --process $PWD/fixtures/process.ok
+
+  tools/wait_port 2525 1
+
+  $swaks --tlsc --tls-protocol no_sslv2,no_sslv3
 }

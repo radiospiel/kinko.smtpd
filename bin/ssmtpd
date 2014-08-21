@@ -72,14 +72,13 @@ var GSTMP_PROCESS		=	 ""		 // command to process email
 var GSMTP_PUB_KEY		=	 ""		 // TLS certificate
 var GSMTP_PRV_KEY		=	 ""		 // TLS key
 var GSMTP_VERBOSE		=	false	 // verbose operation?
-var GSMTP_TLS_OPTIONAL	=   false	 // TLS optional?
+var GSMTP_TLS			=   "strict" // TLS mode: "strict", "optional", "ssl"
 
 /*
  * internal global values
  */
 
 var gstmp_listen_interface string		   // interface to listen to.
-var gstmp_tls_config *tls.Config		   // tls configuration.
 var gstmp_timeout time.Duration			   // timeout.
 var gstmp_sem chan int					   // currently active clients.
 var gstmp_save_mail_chan chan *Client	   // workers for processing mail.
@@ -125,7 +124,7 @@ func ParseArguments() {
 	flag.StringVar(&GSTMP_PROCESS,		"process",		"",						"process command")
 	flag.StringVar(&GSMTP_HOST_NAME,	"hostname",		"server.example.com",	"The STMP hostname")
 	flag.BoolVar(&GSMTP_VERBOSE,		"verbose",		false,					"verbose operation")
-	flag.BoolVar(&GSMTP_TLS_OPTIONAL, 	"tls-optional", false,					"TLS optional?")
+	flag.StringVar(&GSMTP_TLS, 			"tls", 			"strict",				"TLS mode: strict, ssl, optional")
 	flag.Parse()
 
 	// -- initialize internal data
@@ -141,24 +140,47 @@ func ParseArguments() {
 	}
 }
 
+/*
+ * Build TLS configuration.
+ */
+var _tls_config *tls.Config
+
+func TlsConfig() (*tls.Config) {
+	if _tls_config == nil {
+		cert, err := tls.LoadX509KeyPair(GSMTP_PUB_KEY, GSMTP_PRV_KEY)
+		if err != nil {
+			Log(fatal, fmt.Sprintf("There was a problem with loading the certificate: %s", err))
+		}
+		_tls_config = &tls.Config{Certificates: []tls.Certificate{cert}, 
+									ClientAuth: tls.VerifyClientCertIfGiven, 
+									ServerName: GSMTP_HOST_NAME}
+	}
+	
+	return _tls_config;
+}
+
+func Listen(iface string) (listener net.Listener) {
+	var err error
+
+	if GSMTP_TLS == "ssl" {
+		listener, err = tls.Listen("tcp", iface, TlsConfig())
+	} else {
+		listener, err = net.Listen("tcp", iface)
+	}
+
+	if err != nil {
+		Log(fatal, fmt.Sprintf("Cannot listen on %s: %v", iface, err))
+	}
+
+	return listener;
+}
+
 func main() {
 	ParseArguments()
 
-	cert, err := tls.LoadX509KeyPair(GSMTP_PUB_KEY, GSMTP_PRV_KEY)
-	if err != nil {
-		Log(fatal, fmt.Sprintf("There was a problem with loading the certificate: %s", err))
-	}
-	gstmp_tls_config = &tls.Config{Certificates: []tls.Certificate{cert}, 
-								ClientAuth: tls.VerifyClientCertIfGiven, 
-								ServerName: GSMTP_HOST_NAME}
-
 	// Start listening for SMTP connections
-	listener, err := net.Listen("tcp", gstmp_listen_interface)
-	if err != nil {
-		Log(fatal, fmt.Sprintf("Cannot listen on port, %v", err))
-	} else {
-		Log(warn, fmt.Sprintf("Listening on tcp %s", gstmp_listen_interface))
-	}
+	listener := Listen(gstmp_listen_interface);
+	Log(warn, fmt.Sprintf("Listening on tcp %s (tls: %s)", gstmp_listen_interface, GSMTP_TLS))
 
 	var clientId int64 = 1
 	for {
@@ -170,10 +192,11 @@ func main() {
 		Log(info, "Currently " +strconv.Itoa(runtime.NumGoroutine())+ " serving goroutines")
 		gstmp_sem <- 1 // Wait for active queue to drain.
 		go handleClient(&Client{
+			tls_on:			GSMTP_TLS == "ssl",
 			conn:			conn,
-			bufin:		 	bufio.NewReader(conn),
-			bufout:		 	bufio.NewWriter(conn),
-			clientId:	 	clientId,
+			bufin:			bufio.NewReader(conn),
+			bufout:			bufio.NewWriter(conn),
+			clientId:		clientId,
 		})
 		clientId++
 	}
@@ -284,7 +307,7 @@ func handleClient(client *Client) {
 				response("530 NOT ALLOWED"); return false
 			case check == TLS_OFF && client.tls_on:
 				response("530 NOT ALLOWED, TLS is already enabled"); return false
-			case check == TLS_ON && !client.tls_on && !GSMTP_TLS_OPTIONAL:
+			case check == TLS_ON && !client.tls_on && GSMTP_TLS != "optional":
 				response("530 NOT ALLOWED, must STARTTLS"); return false
 		}
 		
@@ -342,9 +365,10 @@ func handleClient(client *Client) {
 		if ! requires(TLS_OFF) {
 			return
 		}
+
 		response("220 Ready to start TLS")
 
-		tlsConn := tls.Server(client.conn, gstmp_tls_config)
+		tlsConn := tls.Server(client.conn, TlsConfig())
 		CheckError(tlsConn.Handshake())
 
 		client.conn = net.Conn(tlsConn)
