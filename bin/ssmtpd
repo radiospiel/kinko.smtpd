@@ -107,6 +107,10 @@ func Log(level int, s string) {
 	}
 }
 
+func CheckError(err error) {
+	if err != nil { panic(err) }
+}
+
 func parseArguments() {
 	log.SetOutput(os.Stderr)
 
@@ -266,9 +270,7 @@ func handleClient(client *Client) {
 		for data != "" {
 			client.conn.SetDeadline(time.Now().Add(gstmp_timeout))
 			size, err := client.bufout.WriteString(data)
-			if err != nil {
-				panic(err)
-			}
+			CheckError(err)
 			client.bufout.Flush()
 			data = data[size:]
 		}
@@ -284,16 +286,13 @@ func handleClient(client *Client) {
 		for ! strings.HasSuffix(input, suffix) {
 			client.conn.SetDeadline(time.Now().Add(gstmp_timeout))
 			reply, err := client.bufin.ReadString('\n')
+			CheckError(err)
 
-			if err == nil && reply != "" {
+			if reply != "" {
 				input = input + reply
 				if len(input) > GSMTP_MAX_SIZE {
 					err = errors.New("Maximum DATA size exceeded (" + strconv.Itoa(GSMTP_MAX_SIZE) + ")")
 				}
-			}
-
-			if err != nil {
-				panic(err)
 			}
 		}
 		return input
@@ -437,10 +436,7 @@ func handleClient(client *Client) {
 				// upgrade to TLS
 				tlsConn := tls.Server(client.conn, gstmp_tls_config)
 				err := tlsConn.Handshake()
-				if err != nil {
-					err = errors.New(fmt.Sprintf("Could not TLS handshake:%v", err))
-					panic(err)
-				}
+				CheckError(err)
 
 				client.conn = net.Conn(tlsConn)
 				client.bufin = bufio.NewReader(client.conn)
